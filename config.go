@@ -13,7 +13,8 @@ type ConfigType struct {
 	Hostname     string `json: "hostname"`
 	DatabaseFile string `json: "databaseFile"`
 	ThemeDir     string `json: "themeDir"`
-	AuthKey      string `json: "authKey"`
+	CsrfKey      string `json: "csrfKey"`
+	SessionKey   string `json: "sessionKey"`
 }
 
 var Config ConfigType
