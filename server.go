@@ -37,6 +37,7 @@ func GetRouter(db *ITrackDatabase) *gin.Engine {
 
 	api.POST("/login", login)
 	api.GET("/tracks", getTracks(db))
+	api.GET("/users", getUsers)
 
 	authorized := api.Group("/")
 	authorized.Use(auth)
@@ -48,7 +49,6 @@ func GetRouter(db *ITrackDatabase) *gin.Engine {
 		authorized.POST("/tracks/:trackId/publish", publishTrack(db))
 		authorized.DELETE("/tracks/:trackId", deleteTrack(db))
 
-		authorized.GET("/users", getUsers)
 		authorized.POST("/users", addUser)
 		authorized.POST("/users/:userId", updateUser)
 		authorized.POST("/users/:userId/password", updateUserPassword)
@@ -92,7 +92,7 @@ type userResponse struct {
 	Name string `json: "name"`
 }
 
-type adminUserResponse struct {
+type authenticatedUserResponse struct {
 	ID    string   `json: "id"`
 	Name  string   `json: "name"`
 	Role  string   `json: "role"`
@@ -101,18 +101,27 @@ type adminUserResponse struct {
 
 func login(c *gin.Context) {
 	session := sessions.Default(c)
-	userId := session.Get("userId")
+	userIdI := session.Get("userId")
+	userNameI := session.Get("userName")
+	userRoleI := session.Get("userRole")
+	userHostsI := session.Get("userHosts")
 
-	if userId != nil {
-		c.JSON(400, errorResponse{"Already logged in"})
-		return
+	if userIdI != nil {
+		userID, ok := userIdI.(string)
+		userName := userNameI.(string)
+		userRole := userRoleI.(string)
+		userHosts := userHostsI.([]string)
+
+		if ok && len(userID) > 0 {
+			c.JSON(200, authenticatedUserResponse{userID, userName, userRole, userHosts})
+			return
+		}
 	}
 
 	var requestData userRequest
 	c.BindJSON(&requestData)
 
 	user := UserDatabase.getUserByName(requestData.Name)
-	spew.Dump(user)
 	if user != nil {
 		if !user.inHost(c.Request.Host) {
 			c.JSON(403, errorResponse{"Invalid login data"})
@@ -126,7 +135,7 @@ func login(c *gin.Context) {
 			session.Set("userHosts", user.Hosts)
 			session.Set("userPassword", user.Password)
 			session.Save()
-			c.JSON(200, userResponse{user.ID, user.Name})
+			c.JSON(200, authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
 			return
 		}
 	}
@@ -272,12 +281,15 @@ func publishTrack(db *ITrackDatabase) gin.HandlerFunc {
 func deleteTrack(db *ITrackDatabase) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		trackId := c.Param("trackId")
-		track := db.deleteTrack(trackId)
+		track := db.getTrackById(trackId)
 
 		if track == nil {
 			c.JSON(404, errorResponse{"Track not found"})
+		} else if track.Episode != nil {
+			c.JSON(403, errorResponse{"Track already published"})
 		} else {
-			c.JSON(200, *track)
+			deletedTrack := db.deleteTrack(trackId)
+			c.JSON(200, *deletedTrack)
 		}
 	}
 }
@@ -399,7 +411,7 @@ func updateUserPassword(c *gin.Context) {
 
 	err := bcrypt.CompareHashAndPassword(currUserPassword, []byte(requestData.CurrentUserPassword))
 	if err != nil {
-		c.JSON(403, errorResponse{"Incorrect password for current user"})
+		c.JSON(403, errorResponse{"Incorrect current password"})
 	}
 
 	if userRole == "admin" || userId == userToUpdateId {
