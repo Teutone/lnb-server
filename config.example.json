@@ -1,8 +1,18 @@
 {
-    "port": 8001,
-    "hostname": "localhost",
-    "databaseFile": "/home/ben/Workspace/lnb-server/data/db.json",
+    "letsEncryptEnabled": false,
+    "letsEncryptEmail": "hello@benjaminbaedorf.eu",
+    "port": 8000,
+    "dataDir": "/home/ben/Workspace/lnb-server/data/",
     "themeDir": "/home/ben/Workspace/lnb-server/static/",
-    "csrfKey": "0123456789-0123456789-0123456789",
-    "sessionKey": "0123456789-0123456789-0123456789"
+    "sessionKey": "0123456789-0123456789-0123456789",
+    "sites": [
+        {
+            "hostname": "dev1.local:8000",
+            "theme": "latenight.blue"
+        },
+        {
+            "hostname": "dev2.local:8000",
+            "theme": "eleventhirty.am"
+        }
+    ]
 }

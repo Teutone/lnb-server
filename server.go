@@ -1,180 +1,423 @@
 package main
 
 import (
-	"fmt"
 	"log"
-	"net/http"
+	"path"
 	"strconv"
 
+	"github.com/davecgh/go-spew/spew"
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/sessions"
-
-	"github.com/gorilla/csrf"
-	"github.com/gorilla/mux"
+	uuid "github.com/satori/go.uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
-var r *mux.Router
 var store *sessions.CookieStore
 
-func Serve() {
-	log.Print("initializing server")
+func GetRouter(db *ITrackDatabase) *gin.Engine {
+	log.Print("initializing server for host " + db.Hostname)
 	// Creates a router without any middleware by default
 	r := gin.New()
 
-	// Global middleware
-	// Logger middleware will write the logs to gin.DefaultWriter even you set with GIN_MODE=release.
-	// By default gin.DefaultWriter = os.Stdout
+	// Logging and default errors
 	r.Use(gin.Logger())
-
-	// Recovery middleware recovers from any panics and writes a 500 if there was one.
 	r.Use(gin.Recovery())
+	r.Static("/static", Config.ThemeDir)
 
-	// Per route middleware, you can add as many as you desire.
-	r.GET("/benchmark", MyBenchLogger(), benchEndpoint)
+	// Sessions
+	store := sessions.NewCookieStore([]byte(Config.SessionKey))
+	r.Use(sessions.Sessions("lnb-session", store))
 
-	// Authorization group
-	// authorized := r.Group("/", AuthRequired())
-	// exactly the same as:
-	authorized := r.Group("/")
-	// per group middleware! in this case we use the custom created
-	// AuthRequired() middleware just in the "authorized" group.
-	authorized.Use(AuthRequired())
+	// Api set-up and routes
+	api := r.Group("/api")
+	api.Use(func(c *gin.Context) {
+		c.Header("Content-Type", "application/json")
+		c.Next()
+	})
+
+	api.POST("/login", login)
+	api.GET("/tracks", getTracks(db))
+
+	authorized := api.Group("/")
+	authorized.Use(auth)
 	{
-		authorized.POST("/login", loginEndpoint)
-		authorized.POST("/submit", submitEndpoint)
-		authorized.POST("/read", readEndpoint)
+		authorized.POST("/logout", logout)
 
-		// nested group
-		testing := authorized.Group("testing")
-		testing.GET("/analytics", analyticsEndpoint)
+		authorized.POST("/tracks", addTrack(db))
+		authorized.POST("/tracks/:trackId", updateTrack(db))
+		authorized.POST("/tracks/:trackId/publish", publishTrack(db))
+		authorized.DELETE("/tracks/:trackId", deleteTrack(db))
+
+		authorized.GET("/users", getUsers)
+		authorized.POST("/users", addUser)
+		authorized.POST("/users/:userId", updateUser)
+		authorized.POST("/users/:userId/password", updateUserPassword)
 	}
 
-	// Listen and serve on 0.0.0.0:8080
-	r.Run(":8080")
+	r.NoRoute(func(c *gin.Context) {
+		c.File(path.Join(Config.ThemeDir, "index.html"))
+	})
 
-	r = mux.NewRouter()
-
-	api := r.PathPrefix("/api").Subrouter()
-	api.HandleFunc("/csrfToken", getCsrfToken).
-		Methods("GET").
-		Host(Config.Hostname)
-
-	api.HandleFunc("/playlist", getPlaylist).
-		Methods("GET").
-		Host(Config.Hostname)
-	api.HandleFunc("/queue", getQueue).
-		Methods("GET").
-		Host(Config.Hostname)
-
-	api.HandleFunc("/tracks", addTrack).
-		Methods("POST").
-		Host(Config.Hostname)
-	api.HandleFunc("/tracks/{trackId}", updateTrack).
-		Methods("POST").
-		Host(Config.Hostname)
-	api.HandleFunc("/tracks/{trackId}/publish", publishTrack).
-		Methods("POST").
-		Host(Config.Hostname)
-	api.HandleFunc("/tracks/{trackId}", deleteTrack).
-		Methods("DELETE").
-		Host(Config.Hostname)
-
-	api.HandleFunc("/users", getUsers).
-		Methods("GET").
-		Host(Config.Hostname)
-	api.HandleFunc("/users", addUser).
-		Methods("POST").
-		Host(Config.Hostname)
-	api.HandleFunc("/users/{trackId}", updateUser).
-		Methods("POST").
-		Host(Config.Hostname)
-
-	r.PathPrefix("/").Handler(http.FileServer(http.Dir(Config.ThemeDir)))
-
-	protectedRouter := csrf.Protect([]byte(Config.CsrfKey))(r)
-	store = sessions.NewCookieStore([]byte(Config.SessionKey))
-	http.Handle("/", protectedRouter)
-	var portString = strconv.FormatInt(int64(Config.Port), 10)
-
-	log.Print("listening on port " + portString)
-	err := http.ListenAndServe(":"+portString, nil)
-	if err != nil {
-		log.Fatal(err)
-	}
+	return r
 }
 
 // Utility
-func setContentType(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		h.ServeHTTP(w, r)
-	})
-}
-func auth(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		session, _ := store.Get(r, "")
-		log.Println("middleware", r.URL)
-		h.ServeHTTP(w, r)
-	})
+type errorResponse struct {
+	Error string `json: "error"`
 }
 
-func logRequest(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Println("middleware", r.URL)
-		h.ServeHTTP(w, r)
-	})
+func auth(c *gin.Context) {
+	session := sessions.Default(c)
+	userId := session.Get("userId")
+
+	if userId == nil {
+		c.Status(403)
+		c.Abort()
+	} else {
+		c.Next()
+	}
 }
 
 // General
 
-func getCsrfToken(w http.ResponseWriter, r *http.Request) {
-	payload := []byte("{\"csrftoken\":\"" + csrf.Token(r) + "\"}")
-	w.Write(payload)
+type userRequest struct {
+	Name     string   `json: "name"`
+	Password string   `json: "password"`
+	Role     string   `json: "role"`
+	Hosts    []string `json: "hosts"`
 }
 
-func getPlaylist(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("getPlaylist")
+type userResponse struct {
+	ID   string `json: "id"`
+	Name string `json: "name"`
 }
 
-func getQueue(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("getQueue")
+type adminUserResponse struct {
+	ID    string   `json: "id"`
+	Name  string   `json: "name"`
+	Role  string   `json: "role"`
+	Hosts []string `json: "hosts"`
+}
+
+func login(c *gin.Context) {
+	session := sessions.Default(c)
+	userId := session.Get("userId")
+
+	if userId != nil {
+		c.JSON(400, errorResponse{"Already logged in"})
+		return
+	}
+
+	var requestData userRequest
+	c.BindJSON(&requestData)
+
+	user := UserDatabase.getUserByName(requestData.Name)
+	spew.Dump(user)
+	if user != nil {
+		if !user.inHost(c.Request.Host) {
+			c.JSON(403, errorResponse{"Invalid login data"})
+		}
+
+		err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(requestData.Password))
+		if err == nil {
+			session.Set("userName", user.Name)
+			session.Set("userId", user.ID)
+			session.Set("userRole", user.Role)
+			session.Set("userHosts", user.Hosts)
+			session.Set("userPassword", user.Password)
+			session.Save()
+			c.JSON(200, userResponse{user.ID, user.Name})
+			return
+		}
+	}
+
+	c.JSON(403, errorResponse{"Invalid login data"})
+}
+
+func logout(c *gin.Context) {
+	session := sessions.Default(c)
+	session.Clear()
+	session.Save()
+	c.JSON(200, struct{}{})
 }
 
 // Tracks
 
-func addTrack(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("addTrack")
+func getTracks(db *ITrackDatabase) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		session := sessions.Default(c)
+		userId := session.Get("userId")
 
+		if userId != nil {
+			c.JSON(200, db.Tracks)
+		} else {
+			c.JSON(200, db.getPublishedTracks())
+		}
+	}
 }
 
-func updateTrack(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("updateTrack")
-
+type trackRequest struct {
+	Artist  string `json: "artist"`
+	Title   string `json: "title"`
+	Release string `json: "release"`
+	Url     string `json: "url"`
 }
 
-func publishTrack(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("publishTrack")
+func addTrack(db *ITrackDatabase) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var requestData trackRequest
+		c.BindJSON(&requestData)
+		session := sessions.Default(c)
+		userId := session.Get("userId")
 
+		id := userId.(string)
+
+		if len(requestData.Artist) == 0 {
+			c.JSON(400, errorResponse{"Invalid artist"})
+		}
+
+		if len(requestData.Title) == 0 {
+			c.JSON(400, errorResponse{"Invalid title"})
+		}
+
+		if len(requestData.Release) == 0 {
+			c.JSON(400, errorResponse{"Invalid release"})
+		}
+
+		if len(requestData.Url) == 0 {
+			c.JSON(400, errorResponse{"Invalid url"})
+		}
+
+		track := ITrack{
+			ID:       uuid.NewV4().String(),
+			Episode:  nil,
+			Artist:   requestData.Artist,
+			Title:    requestData.Title,
+			Release:  requestData.Release,
+			Url:      requestData.Url,
+			Uploader: id,
+		}
+		db.addTrack(track)
+
+		c.JSON(200, track)
+	}
 }
 
-func deleteTrack(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("deleteTrack")
+func updateTrack(db *ITrackDatabase) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var requestData trackRequest
+		c.BindJSON(&requestData)
+		trackId := c.Param("trackId")
 
+		log.Println(trackId)
+
+		if len(requestData.Artist) == 0 {
+			c.JSON(400, errorResponse{"Invalid artist"})
+		}
+
+		if len(requestData.Title) == 0 {
+			c.JSON(400, errorResponse{"Invalid title"})
+		}
+
+		if len(requestData.Release) == 0 {
+			c.JSON(400, errorResponse{"Invalid release"})
+		}
+
+		if len(requestData.Url) == 0 {
+			c.JSON(400, errorResponse{"Invalid url"})
+		}
+
+		track := db.getTrackById(trackId)
+
+		if track != nil {
+			track.Artist = requestData.Artist
+			track.Title = requestData.Title
+			track.Release = requestData.Release
+			track.Url = requestData.Url
+			db.write()
+
+			c.JSON(200, *track)
+		} else {
+			c.JSON(404, errorResponse{"Track not found"})
+			c.Abort()
+		}
+	}
+}
+
+func publishTrack(db *ITrackDatabase) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		trackId := c.Param("trackId")
+		track := db.getTrackById(trackId)
+
+		if track != nil {
+			if track.Episode != nil {
+				c.JSON(400, errorResponse{"Track already published at episode " + strconv.FormatInt(int64(*track.Episode), 10)})
+				return
+			}
+
+			latestEpisode := db.getNewEpisodeNumber()
+			log.Println(latestEpisode)
+			track.Episode = &latestEpisode
+			log.Println(track.Episode, *track.Episode)
+			spew.Dump(track)
+			spew.Dump(db.Tracks)
+			db.write()
+			c.JSON(200, track)
+		} else {
+			c.JSON(404, errorResponse{"Track not found"})
+		}
+	}
+}
+
+func deleteTrack(db *ITrackDatabase) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		trackId := c.Param("trackId")
+		track := db.deleteTrack(trackId)
+
+		if track == nil {
+			c.JSON(404, errorResponse{"Track not found"})
+		} else {
+			c.JSON(200, *track)
+		}
+	}
 }
 
 // Users
 
-func getUsers(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("getUsers")
+func getUsers(c *gin.Context) {
+	session := sessions.Default(c)
+	userRole := session.Get("userRole")
 
+	if userRole == "admin" {
+		c.JSON(200, UserDatabase.Users)
+	} else {
+		response := make([]userResponse, 0)
+		for _, user := range UserDatabase.Users {
+			if user.inHost(c.Request.Host) {
+				response = append(response, userResponse{user.ID, user.Name})
+			}
+		}
+		c.JSON(200, response)
+	}
 }
 
-func addUser(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("addUser")
+func addUser(c *gin.Context) {
+	session := sessions.Default(c)
+	userRole := session.Get("userRole")
 
+	if userRole != "admin" {
+		c.JSON(403, errorResponse{"Insufficient rights"})
+	}
+
+	var requestData userRequest
+	c.BindJSON(&requestData)
+
+	if len(requestData.Name) == 0 {
+		c.JSON(400, errorResponse{"Invalid name"})
+	}
+
+	if len(requestData.Password) < 12 {
+		c.JSON(400, errorResponse{"Invalid Password. Minimum length is 12"})
+	}
+
+	if len(requestData.Role) == 0 || (requestData.Role != "submitter" && requestData.Role != "admin") {
+		c.JSON(400, errorResponse{"Invalid Role. Provide either 'admin' or 'submitter'"})
+	}
+
+	if len(requestData.Hosts) == 0 {
+		requestData.Hosts = append(requestData.Hosts, c.Request.Host)
+	}
+
+	user := UserDatabase.getUserByName(requestData.Name)
+
+	if len(user.Name) > 0 {
+		c.JSON(400, errorResponse{"User already exists"})
+		return
+	}
+
+	password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(500, errorResponse{"Something went wrong"})
+	}
+
+	id := uuid.NewV4()
+	newUser := IUser{
+		id.String(),
+		requestData.Name,
+		string(password),
+		requestData.Role,
+		requestData.Hosts,
+	}
+	UserDatabase.addUser(newUser)
+
+	c.JSON(200, userResponse{newUser.ID, newUser.Name})
 }
 
-func updateUser(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("updateUser")
+func updateUser(c *gin.Context) {
+	var requestData userRequest
+	c.BindJSON(&requestData)
+	userId := c.Param("userId")
 
+	if len(requestData.Name) == 0 {
+		c.JSON(400, errorResponse{"Invalid name"})
+	}
+
+	if len(requestData.Password) < 12 {
+		c.JSON(400, errorResponse{"Invalid Password. Minimum length is 12"})
+	}
+
+	user := UserDatabase.getUserById(userId)
+
+	if len(user.Name) > 0 {
+		password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(500, errorResponse{"Something went wrong"})
+		}
+
+		user.Name = requestData.Name
+		user.Password = string(password)
+		UserDatabase.write()
+	} else {
+		c.JSON(404, errorResponse{"User not found"})
+	}
+}
+
+type passwordUpdateRequest struct {
+	CurrentUserPassword string `json: "currentUserPassword"`
+	Password            string `json: "password"`
+	PasswordRepeat      string `json: "passwordRepeat"`
+}
+
+func updateUserPassword(c *gin.Context) {
+	session := sessions.Default(c)
+	userRole := session.Get("userRole").(string)
+	userId := session.Get("userId").(string)
+	currUserPassword := session.Get("userPassword").([]byte)
+	userToUpdateId := c.Param("userId")
+	var requestData passwordUpdateRequest
+	c.BindJSON(&requestData)
+
+	err := bcrypt.CompareHashAndPassword(currUserPassword, []byte(requestData.CurrentUserPassword))
+	if err != nil {
+		c.JSON(403, errorResponse{"Incorrect password for current user"})
+	}
+
+	if userRole == "admin" || userId == userToUpdateId {
+		if requestData.Password != requestData.PasswordRepeat {
+			c.JSON(400, errorResponse{"Passwords do not match"})
+		}
+
+		password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(500, errorResponse{"Something went wrong"})
+			return
+		}
+
+		user := UserDatabase.getUserById(userId)
+		user.Password = string(password)
+		UserDatabase.write()
+
+	} else {
+		c.JSON(403, errorResponse{"Insufficient rights"})
+	}
 }
