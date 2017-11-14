@@ -8,17 +8,17 @@ import (
 )
 
 type SiteConfig struct {
-	Hostname string `json: "hostname"`
-	Theme    string `json: "theme"`
+	Hostname string `json:"hostname"`
+	Theme    string `json:"theme"`
 }
 
 type ServerConfig struct {
-	LetsEncryptEnabled bool   `json: "letsEncryptEnabled"`
-	LetsEncryptEmail   string `json: "letsEncryptEmail"`
-	Port               int    `json: "port"`
-	DataDir            string `json: "dataDir"`
-	ThemeDir           string `json: "themeDir"`
-	SessionKey         string `json: "sessionKey"`
+	LetsEncryptEnabled bool   `json:"letsEncryptEnabled"`
+	LetsEncryptEmail   string `json:"letsEncryptEmail"`
+	Port               int    `json:"port"`
+	DataDir            string `json:"dataDir"`
+	ThemeDir           string `json:"themeDir"`
+	SessionKey         string `json:"sessionKey"`
 	Sites              []SiteConfig
 }
 

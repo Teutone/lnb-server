@@ -9,13 +9,13 @@ import (
 )
 
 type ITrack struct {
-	ID       string `json: "id"`
-	Episode  *int   `json: "episode"`
-	Artist   string `json: "artist"`
-	Title    string `json: "title"`
-	Release  string `json: "release"`
-	Url      string `json: "url"`
-	Uploader string `json: "uploader"`
+	ID       string `json:"id"`
+	Episode  *int   `json:"episode"`
+	Artist   string `json:"artist"`
+	Title    string `json:"title"`
+	Release  string `json:"release"`
+	URL      string `json:"url"`
+	Uploader string `json:"uploader"`
 }
 
 type ITrackDatabase struct {

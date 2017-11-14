@@ -9,11 +9,11 @@ import (
 )
 
 type IUser struct {
-	ID       string   `json: "id"`
-	Name     string   `json: "name"`
-	Password string   `json: "password"`
-	Role     string   `json: "role"`
-	Hosts    []string `json: "hosts"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Password string   `json:"password"`
+	Role     string   `json:"role"`
+	Hosts    []string `json:"hosts"`
 }
 
 func (u *IUser) inHost(hostname string) bool {

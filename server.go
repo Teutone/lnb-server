@@ -35,25 +35,31 @@ func GetRouter(db *ITrackDatabase) *gin.Engine {
 		c.Next()
 	})
 
+	// Unauthenticated API routes
 	api.POST("/login", login)
 	api.GET("/tracks", getTracks(db))
 	api.GET("/users", getUsers)
 
+	// First time install route, only works when there are no users in the DB yet
+	api.POST("/install", install)
+
+	// Authenticated routes
 	authorized := api.Group("/")
 	authorized.Use(auth)
 	{
 		authorized.POST("/logout", logout)
 
 		authorized.POST("/tracks", addTrack(db))
-		authorized.POST("/tracks/:trackId", updateTrack(db))
-		authorized.POST("/tracks/:trackId/publish", publishTrack(db))
-		authorized.DELETE("/tracks/:trackId", deleteTrack(db))
+		authorized.POST("/tracks/:trackID", updateTrack(db))
+		authorized.POST("/tracks/:trackID/publish", publishTrack(db))
+		authorized.DELETE("/tracks/:trackID", deleteTrack(db))
 
 		authorized.POST("/users", addUser)
-		authorized.POST("/users/:userId", updateUser)
-		authorized.POST("/users/:userId/password", updateUserPassword)
+		authorized.POST("/users/:userID", updateUser)
+		authorized.POST("/users/:userID/password", updateUserPassword)
 	}
 
+	// Fallback route, just sends the frontend index.html
 	r.NoRoute(func(c *gin.Context) {
 		c.File(path.Join(Config.ThemeDir, "index.html"))
 	})
@@ -63,14 +69,15 @@ func GetRouter(db *ITrackDatabase) *gin.Engine {
 
 // Utility
 type errorResponse struct {
-	Error string `json: "error"`
+	Error string `json:"error"`
 }
 
+// Authentication middleware
 func auth(c *gin.Context) {
 	session := sessions.Default(c)
-	userId := session.Get("userId")
+	userID := session.Get("userID")
 
-	if userId == nil {
+	if userID == nil {
 		c.Status(403)
 		c.Abort()
 	} else {
@@ -78,36 +85,95 @@ func auth(c *gin.Context) {
 	}
 }
 
-// General
+// First time setup
+
+type installRequest struct {
+	Name     string `json:"name"`
+	Password string `json:"password"`
+}
+
+// Accepts admin user credentials for first-time setup.
+// Logs the user in afterwards.
+func install(c *gin.Context) {
+	if len(UserDatabase.Users) == 0 {
+		var requestData installRequest
+		c.BindJSON(&requestData)
+
+		if len(requestData.Name) == 0 {
+			c.JSON(400, errorResponse{"Invalid name"})
+			return
+		}
+
+		if len(requestData.Password) < 12 {
+			c.JSON(400, errorResponse{"Invalid Password. Minimum length is 12"})
+			return
+		}
+
+		password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(500, errorResponse{"Something went wrong"})
+			return
+		}
+
+		hosts := make([]string, 0)
+		for _, site := range Config.Sites {
+			hosts = append(hosts, site.Hostname)
+		}
+
+		id := uuid.NewV4()
+		user := IUser{
+			id.String(),
+			requestData.Name,
+			string(password),
+			"admin",
+			hosts,
+		}
+		UserDatabase.addUser(user)
+
+		session := sessions.Default(c)
+		session.Set("userName", user.Name)
+		session.Set("userID", user.ID)
+		session.Set("userRole", user.Role)
+		session.Set("userHosts", user.Hosts)
+		session.Set("userPassword", user.Password)
+		session.Save()
+
+		c.JSON(200, authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
+	} else {
+		c.JSON(403, errorResponse{"Already set up"})
+	}
+}
+
+// General request and response structs
 
 type userRequest struct {
-	Name     string   `json: "name"`
-	Password string   `json: "password"`
-	Role     string   `json: "role"`
-	Hosts    []string `json: "hosts"`
+	Name     string   `json:"name"`
+	Password string   `json:"password"`
+	Role     string   `json:"role"`
+	Hosts    []string `json:"hosts"`
 }
 
 type userResponse struct {
-	ID   string `json: "id"`
-	Name string `json: "name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type authenticatedUserResponse struct {
-	ID    string   `json: "id"`
-	Name  string   `json: "name"`
-	Role  string   `json: "role"`
-	Hosts []string `json: "hosts"`
+	ID    string   `json:"id"`
+	Name  string   `json:"name"`
+	Role  string   `json:"role"`
+	Hosts []string `json:"hosts"`
 }
 
 func login(c *gin.Context) {
 	session := sessions.Default(c)
-	userIdI := session.Get("userId")
+	userIDI := session.Get("userID")
 	userNameI := session.Get("userName")
 	userRoleI := session.Get("userRole")
 	userHostsI := session.Get("userHosts")
 
-	if userIdI != nil {
-		userID, ok := userIdI.(string)
+	if userIDI != nil {
+		userID, ok := userIDI.(string)
 		userName := userNameI.(string)
 		userRole := userRoleI.(string)
 		userHosts := userHostsI.([]string)
@@ -125,12 +191,13 @@ func login(c *gin.Context) {
 	if user != nil {
 		if !user.inHost(c.Request.Host) {
 			c.JSON(403, errorResponse{"Invalid login data"})
+			return
 		}
 
 		err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(requestData.Password))
 		if err == nil {
 			session.Set("userName", user.Name)
-			session.Set("userId", user.ID)
+			session.Set("userID", user.ID)
 			session.Set("userRole", user.Role)
 			session.Set("userHosts", user.Hosts)
 			session.Set("userPassword", user.Password)
@@ -150,14 +217,14 @@ func logout(c *gin.Context) {
 	c.JSON(200, struct{}{})
 }
 
-// Tracks
+// Track CRUD
 
 func getTracks(db *ITrackDatabase) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		session := sessions.Default(c)
-		userId := session.Get("userId")
+		userID := session.Get("userID")
 
-		if userId != nil {
+		if userID != nil {
 			c.JSON(200, db.Tracks)
 		} else {
 			c.JSON(200, db.getPublishedTracks())
@@ -166,10 +233,10 @@ func getTracks(db *ITrackDatabase) gin.HandlerFunc {
 }
 
 type trackRequest struct {
-	Artist  string `json: "artist"`
-	Title   string `json: "title"`
-	Release string `json: "release"`
-	Url     string `json: "url"`
+	Artist  string `json:"artist"`
+	Title   string `json:"title"`
+	Release string `json:"release"`
+	URL     string `json:"URL"`
 }
 
 func addTrack(db *ITrackDatabase) gin.HandlerFunc {
@@ -177,24 +244,28 @@ func addTrack(db *ITrackDatabase) gin.HandlerFunc {
 		var requestData trackRequest
 		c.BindJSON(&requestData)
 		session := sessions.Default(c)
-		userId := session.Get("userId")
+		userID := session.Get("userID")
 
-		id := userId.(string)
+		id := userID.(string)
 
 		if len(requestData.Artist) == 0 {
 			c.JSON(400, errorResponse{"Invalid artist"})
+			return
 		}
 
 		if len(requestData.Title) == 0 {
 			c.JSON(400, errorResponse{"Invalid title"})
+			return
 		}
 
 		if len(requestData.Release) == 0 {
 			c.JSON(400, errorResponse{"Invalid release"})
+			return
 		}
 
-		if len(requestData.Url) == 0 {
-			c.JSON(400, errorResponse{"Invalid url"})
+		if len(requestData.URL) == 0 {
+			c.JSON(400, errorResponse{"Invalid URL"})
+			return
 		}
 
 		track := ITrack{
@@ -203,7 +274,7 @@ func addTrack(db *ITrackDatabase) gin.HandlerFunc {
 			Artist:   requestData.Artist,
 			Title:    requestData.Title,
 			Release:  requestData.Release,
-			Url:      requestData.Url,
+			URL:      requestData.URL,
 			Uploader: id,
 		}
 		db.addTrack(track)
@@ -216,33 +287,37 @@ func updateTrack(db *ITrackDatabase) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var requestData trackRequest
 		c.BindJSON(&requestData)
-		trackId := c.Param("trackId")
+		trackID := c.Param("trackID")
 
-		log.Println(trackId)
+		log.Println(trackID)
 
 		if len(requestData.Artist) == 0 {
 			c.JSON(400, errorResponse{"Invalid artist"})
+			return
 		}
 
 		if len(requestData.Title) == 0 {
 			c.JSON(400, errorResponse{"Invalid title"})
+			return
 		}
 
 		if len(requestData.Release) == 0 {
 			c.JSON(400, errorResponse{"Invalid release"})
+			return
 		}
 
-		if len(requestData.Url) == 0 {
-			c.JSON(400, errorResponse{"Invalid url"})
+		if len(requestData.URL) == 0 {
+			c.JSON(400, errorResponse{"Invalid URL"})
+			return
 		}
 
-		track := db.getTrackById(trackId)
+		track := db.getTrackById(trackID)
 
 		if track != nil {
 			track.Artist = requestData.Artist
 			track.Title = requestData.Title
 			track.Release = requestData.Release
-			track.Url = requestData.Url
+			track.URL = requestData.URL
 			db.write()
 
 			c.JSON(200, *track)
@@ -255,8 +330,8 @@ func updateTrack(db *ITrackDatabase) gin.HandlerFunc {
 
 func publishTrack(db *ITrackDatabase) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		trackId := c.Param("trackId")
-		track := db.getTrackById(trackId)
+		trackID := c.Param("trackID")
+		track := db.getTrackById(trackID)
 
 		if track != nil {
 			if track.Episode != nil {
@@ -280,28 +355,34 @@ func publishTrack(db *ITrackDatabase) gin.HandlerFunc {
 
 func deleteTrack(db *ITrackDatabase) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		trackId := c.Param("trackId")
-		track := db.getTrackById(trackId)
+		trackID := c.Param("trackID")
+		track := db.getTrackById(trackID)
 
 		if track == nil {
 			c.JSON(404, errorResponse{"Track not found"})
 		} else if track.Episode != nil {
 			c.JSON(403, errorResponse{"Track already published"})
 		} else {
-			deletedTrack := db.deleteTrack(trackId)
+			deletedTrack := db.deleteTrack(trackID)
 			c.JSON(200, *deletedTrack)
 		}
 	}
 }
 
-// Users
+// User CRU(D)
 
 func getUsers(c *gin.Context) {
 	session := sessions.Default(c)
 	userRole := session.Get("userRole")
 
 	if userRole == "admin" {
-		c.JSON(200, UserDatabase.Users)
+		response := make([]authenticatedUserResponse, 0)
+		for _, user := range UserDatabase.Users {
+			if user.inHost(c.Request.Host) {
+				response = append(response, authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
+			}
+		}
+		c.JSON(200, response)
 	} else {
 		response := make([]userResponse, 0)
 		for _, user := range UserDatabase.Users {
@@ -319,6 +400,7 @@ func addUser(c *gin.Context) {
 
 	if userRole != "admin" {
 		c.JSON(403, errorResponse{"Insufficient rights"})
+		return
 	}
 
 	var requestData userRequest
@@ -326,14 +408,17 @@ func addUser(c *gin.Context) {
 
 	if len(requestData.Name) == 0 {
 		c.JSON(400, errorResponse{"Invalid name"})
+		return
 	}
 
 	if len(requestData.Password) < 12 {
 		c.JSON(400, errorResponse{"Invalid Password. Minimum length is 12"})
+		return
 	}
 
 	if len(requestData.Role) == 0 || (requestData.Role != "submitter" && requestData.Role != "admin") {
 		c.JSON(400, errorResponse{"Invalid Role. Provide either 'admin' or 'submitter'"})
+		return
 	}
 
 	if len(requestData.Hosts) == 0 {
@@ -350,6 +435,7 @@ func addUser(c *gin.Context) {
 	password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(500, errorResponse{"Something went wrong"})
+		return
 	}
 
 	id := uuid.NewV4()
@@ -368,22 +454,25 @@ func addUser(c *gin.Context) {
 func updateUser(c *gin.Context) {
 	var requestData userRequest
 	c.BindJSON(&requestData)
-	userId := c.Param("userId")
+	userID := c.Param("userID")
 
 	if len(requestData.Name) == 0 {
 		c.JSON(400, errorResponse{"Invalid name"})
+		return
 	}
 
 	if len(requestData.Password) < 12 {
 		c.JSON(400, errorResponse{"Invalid Password. Minimum length is 12"})
+		return
 	}
 
-	user := UserDatabase.getUserById(userId)
+	user := UserDatabase.getUserById(userID)
 
 	if len(user.Name) > 0 {
 		password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
 		if err != nil {
 			c.JSON(500, errorResponse{"Something went wrong"})
+			return
 		}
 
 		user.Name = requestData.Name
@@ -395,28 +484,30 @@ func updateUser(c *gin.Context) {
 }
 
 type passwordUpdateRequest struct {
-	CurrentUserPassword string `json: "currentUserPassword"`
-	Password            string `json: "password"`
-	PasswordRepeat      string `json: "passwordRepeat"`
+	CurrentUserPassword string `json:"currentUserPassword"`
+	Password            string `json:"password"`
+	PasswordRepeat      string `json:"passwordRepeat"`
 }
 
 func updateUserPassword(c *gin.Context) {
 	session := sessions.Default(c)
 	userRole := session.Get("userRole").(string)
-	userId := session.Get("userId").(string)
+	userID := session.Get("userID").(string)
 	currUserPassword := session.Get("userPassword").([]byte)
-	userToUpdateId := c.Param("userId")
+	userToUpdateId := c.Param("userID")
 	var requestData passwordUpdateRequest
 	c.BindJSON(&requestData)
 
 	err := bcrypt.CompareHashAndPassword(currUserPassword, []byte(requestData.CurrentUserPassword))
 	if err != nil {
 		c.JSON(403, errorResponse{"Incorrect current password"})
+		return
 	}
 
-	if userRole == "admin" || userId == userToUpdateId {
+	if userRole == "admin" || userID == userToUpdateId {
 		if requestData.Password != requestData.PasswordRepeat {
 			c.JSON(400, errorResponse{"Passwords do not match"})
+			return
 		}
 
 		password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
@@ -425,7 +516,7 @@ func updateUserPassword(c *gin.Context) {
 			return
 		}
 
-		user := UserDatabase.getUserById(userId)
+		user := UserDatabase.getUserById(userID)
 		user.Password = string(password)
 		UserDatabase.write()
 
