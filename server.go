@@ -83,9 +83,10 @@ type errorResponse struct {
 // Authentication middleware
 func auth(c *gin.Context) {
 	session := sessions.Default(c)
-	userID := session.Get("userID")
+	userIDI := session.Get("userID")
+	userID, ok := userIDI.(string)
 
-	if userID == nil {
+	if !ok || len(userID) == 0 {
 		c.Status(403)
 		c.Abort()
 	} else {
