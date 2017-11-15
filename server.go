@@ -4,6 +4,7 @@ import (
 	"log"
 	"path"
 	"strconv"
+	"time"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -11,8 +12,11 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// The cookie store
 var store *sessions.CookieStore
 
+// The router initializing function.
+// Takes the track database associated with the host as only argument
 func GetRouter(db *ITrackDatabase) *gin.Engine {
 	log.Print("initializing server for host " + db.Hostname)
 	// Creates a router without any middleware by default
@@ -67,10 +71,14 @@ func GetRouter(db *ITrackDatabase) *gin.Engine {
 	return r
 }
 
-// Utility
+/* Utility
+----------------------------------*/
 type errorResponse struct {
 	Error string `json:"error"`
 }
+
+/* Authentication
+----------------------------------*/
 
 // Authentication middleware
 func auth(c *gin.Context) {
@@ -85,8 +93,17 @@ func auth(c *gin.Context) {
 	}
 }
 
-// First time setup
+// Remembered user tokens. Do not persist across
+// server restarts
+var remembered = make([]rememberedLogin, 0)
 
+type rememberedLogin struct {
+	userID string
+	Token  string
+}
+
+/* First time setup
+----------------------------------*/
 type installRequest struct {
 	Name     string `json:"name"`
 	Password string `json:"password"`
@@ -144,13 +161,20 @@ func install(c *gin.Context) {
 	}
 }
 
-// General request and response structs
+/* Authentication methods
+-------------------------------------------*/
 
 type userRequest struct {
 	Name     string   `json:"name"`
 	Password string   `json:"password"`
 	Role     string   `json:"role"`
 	Hosts    []string `json:"hosts"`
+}
+
+type loginRequest struct {
+	Name     string `json:"name"`
+	Password string `json:"password"`
+	Remember bool   `json:"remember"`
 }
 
 type userResponse struct {
@@ -184,7 +208,19 @@ func login(c *gin.Context) {
 		}
 	}
 
-	var requestData userRequest
+	token, err := c.Cookie("lnb-r")
+	if err == nil {
+		for _, rToken := range remembered {
+			if rToken.Token == token {
+				user := UserDatabase.getUserById(rToken.userID)
+				if user != nil {
+					c.JSON(200, authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
+				}
+			}
+		}
+	}
+
+	var requestData loginRequest
 	c.BindJSON(&requestData)
 
 	user := UserDatabase.getUserByName(requestData.Name)
@@ -202,6 +238,29 @@ func login(c *gin.Context) {
 			session.Set("userHosts", user.Hosts)
 			session.Set("userPassword", user.Password)
 			session.Save()
+
+			if requestData.Remember {
+				token, err := GenerateRandomString(32)
+				if err != nil {
+					c.JSON(500, errorResponse{"Something went wrong"})
+					return
+				}
+
+				oneYearSeconds := 60 * 60 * 24 * 365
+				c.SetCookie("lnb-r", token, oneYearSeconds, "/", c.Request.Host, true, true)
+				remembered = append(remembered, rememberedLogin{user.ID, token})
+				select {
+				case <-time.After(time.Duration(oneYearSeconds) * time.Second):
+					for i := range remembered {
+						r := &remembered[i]
+						if r.userID == user.ID {
+							remembered = append(remembered[:i], remembered[i+1:]...)
+							break
+						}
+					}
+				}
+			}
+
 			c.JSON(200, authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
 			return
 		}
@@ -217,7 +276,18 @@ func logout(c *gin.Context) {
 	c.JSON(200, struct{}{})
 }
 
-// Track CRUD
+/* Track CRUD
+----------------------------------*/
+
+type trackRequest struct {
+	Artist  string `json:"artist"`
+	Title   string `json:"title"`
+	Release string `json:"release"`
+	URL     string `json:"URL"`
+	Start   int    `json:"start"`
+	End     int    `json:"end"`
+	Meta    string `json:"meta"`
+}
 
 func getTracks(db *ITrackDatabase) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -230,16 +300,6 @@ func getTracks(db *ITrackDatabase) gin.HandlerFunc {
 			c.JSON(200, db.getPublishedTracks())
 		}
 	}
-}
-
-type trackRequest struct {
-	Artist  string `json:"artist"`
-	Title   string `json:"title"`
-	Release string `json:"release"`
-	URL     string `json:"URL"`
-	Start   int    `json:"start"`
-	End     int    `json:"end"`
-	Meta    string `json:"meta"`
 }
 
 func addTrack(db *ITrackDatabase) gin.HandlerFunc {
@@ -413,7 +473,8 @@ func deleteTrack(db *ITrackDatabase) gin.HandlerFunc {
 	}
 }
 
-// User CRU(D)
+/* User CRU(D)
+----------------------------------*/
 
 func getUsers(c *gin.Context) {
 	session := sessions.Default(c)
