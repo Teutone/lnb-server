@@ -5,7 +5,6 @@ import (
 	"path"
 	"strconv"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	uuid "github.com/satori/go.uuid"
@@ -52,6 +51,7 @@ func GetRouter(db *ITrackDatabase) *gin.Engine {
 		authorized.POST("/tracks", addTrack(db))
 		authorized.POST("/tracks/:trackID", updateTrack(db))
 		authorized.POST("/tracks/:trackID/publish", publishTrack(db))
+		authorized.POST("/tracks/:trackID/claim", claimTrack(db))
 		authorized.DELETE("/tracks/:trackID", deleteTrack(db))
 
 		authorized.POST("/users", addUser)
@@ -237,6 +237,9 @@ type trackRequest struct {
 	Title   string `json:"title"`
 	Release string `json:"release"`
 	URL     string `json:"URL"`
+	Start   int    `json:"start"`
+	End     int    `json:"end"`
+	Meta    string `json:"meta"`
 }
 
 func addTrack(db *ITrackDatabase) gin.HandlerFunc {
@@ -268,6 +271,15 @@ func addTrack(db *ITrackDatabase) gin.HandlerFunc {
 			return
 		}
 
+		if requestData.End == 0 {
+			c.JSON(400, errorResponse{"End cannot be zero"})
+			return
+		}
+
+		if len(requestData.Meta) == 0 {
+			requestData.Meta = "{}"
+		}
+
 		track := ITrack{
 			ID:       uuid.NewV4().String(),
 			Episode:  nil,
@@ -275,6 +287,9 @@ func addTrack(db *ITrackDatabase) gin.HandlerFunc {
 			Title:    requestData.Title,
 			Release:  requestData.Release,
 			URL:      requestData.URL,
+			Start:    requestData.Start,
+			End:      requestData.End,
+			Meta:     requestData.Meta,
 			Uploader: id,
 		}
 		db.addTrack(track)
@@ -288,8 +303,6 @@ func updateTrack(db *ITrackDatabase) gin.HandlerFunc {
 		var requestData trackRequest
 		c.BindJSON(&requestData)
 		trackID := c.Param("trackID")
-
-		log.Println(trackID)
 
 		if len(requestData.Artist) == 0 {
 			c.JSON(400, errorResponse{"Invalid artist"})
@@ -311,6 +324,15 @@ func updateTrack(db *ITrackDatabase) gin.HandlerFunc {
 			return
 		}
 
+		if requestData.End == 0 {
+			c.JSON(400, errorResponse{"End cannot be zero"})
+			return
+		}
+
+		if len(requestData.Meta) == 0 {
+			requestData.Meta = "{}"
+		}
+
 		track := db.getTrackById(trackID)
 
 		if track != nil {
@@ -318,6 +340,9 @@ func updateTrack(db *ITrackDatabase) gin.HandlerFunc {
 			track.Title = requestData.Title
 			track.Release = requestData.Release
 			track.URL = requestData.URL
+			track.Start = requestData.Start
+			track.End = requestData.End
+			track.Meta = requestData.Meta
 			db.write()
 
 			c.JSON(200, *track)
@@ -340,11 +365,30 @@ func publishTrack(db *ITrackDatabase) gin.HandlerFunc {
 			}
 
 			latestEpisode := db.getNewEpisodeNumber()
-			log.Println(latestEpisode)
 			track.Episode = &latestEpisode
-			log.Println(track.Episode, *track.Episode)
-			spew.Dump(track)
-			spew.Dump(db.Tracks)
+			db.write()
+			c.JSON(200, track)
+		} else {
+			c.JSON(404, errorResponse{"Track not found"})
+		}
+	}
+}
+
+func claimTrack(db *ITrackDatabase) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		trackID := c.Param("trackID")
+		track := db.getTrackById(trackID)
+
+		if track != nil {
+			if len(track.Uploader) != 0 {
+				c.JSON(400, errorResponse{"Track already claimed"})
+				return
+			}
+
+			session := sessions.Default(c)
+			userID := session.Get("userID")
+			userIDstring := userID.(string)
+			track.Uploader = userIDstring
 			db.write()
 			c.JSON(200, track)
 		} else {

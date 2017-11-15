@@ -14,8 +14,11 @@ type ITrack struct {
 	Artist   string `json:"artist"`
 	Title    string `json:"title"`
 	Release  string `json:"release"`
+	Start    int    `json:"start"`
+	End      int    `json:"end"`
 	URL      string `json:"url"`
 	Uploader string `json:"uploader"`
+	Meta     string `json:"meta"`
 }
 
 type ITrackDatabase struct {
@@ -62,7 +65,11 @@ func InitTrackDatabase(hostname string) *ITrackDatabase {
 		if err != nil {
 			log.Fatal(err)
 		}
-		json.Unmarshal(databaseContents, &database.Tracks)
+		err = json.Unmarshal(databaseContents, &database.Tracks)
+
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 	return &database
 }
