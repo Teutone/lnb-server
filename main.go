@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"golang.org/x/crypto/acme/autocert"
 )
@@ -33,6 +34,8 @@ func main() {
 		hostnames = append(hostnames, vConfig.Hostname)
 	}
 
+	handler := handlers.LoggingHandler(os.Stdout, handlers.CompressHandler(router))
+
 	if Config.LetsEncryptEnabled {
 		// Setup letsencrypt manager
 		m := autocert.Manager{
@@ -44,7 +47,7 @@ func main() {
 		s := &http.Server{
 			Addr:         ":https",
 			TLSConfig:    &tls.Config{GetCertificate: m.GetCertificate},
-			Handler:      router,
+			Handler:      handler,
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 10 * time.Second,
 		}
@@ -54,6 +57,6 @@ func main() {
 		// No letsencrypt; just listen on the specified port
 		portString := strconv.FormatInt(int64(Config.Port), 10)
 		log.Println("Listening on port :" + portString)
-		log.Fatal(http.ListenAndServe(":"+portString, router))
+		log.Fatal(http.ListenAndServe(":"+portString, handler))
 	}
 }

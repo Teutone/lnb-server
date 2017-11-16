@@ -1,18 +1,13 @@
 package main
 
 import (
-	"net/http"
 	"log"
-	"path"
+	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/static"
-	"github.com/gin-gonic/gin"
 	"github.com/gorilla/mux"
+	"github.com/gorilla/sessions"
 	uuid "github.com/satori/go.uuid"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -20,97 +15,9 @@ import (
 // The cookie store
 var store *sessions.CookieStore
 
-// The router initializing function.
-// Takes the track database associated with the host as only argument
-func InitHostRouter(db *ITrackDatabase, r *mux.Router) {
-	log.Print("initializing router for host " + db.Hostname)
-	// Creates a router without any middleware by default
-
-	// Logging and default errors
-	r.Use(gin.Logger())
-	r.Use(gin.Recovery())
-
-	// Sessions
-	sessionName := "lnb-session" + strings.Replace(db.Hostname, ":", "-", -1)
-	store := sessions.NewCookieStore([]byte(Config.SessionKey))
-	r.Use(sessions.Sessions(sessionName, store))
-
-	// Api set-up and routes
-	api := r.Group("/api")
-	api.Use(func(c *gin.Context) {
-		c.Header("Content-Type", "application/json")
-		c.Next()
-	})
-
-	// Unauthenticated API routes
-	api.POST("/login", login)
-	api.GET("/tracks", getTracks(db))
-	api.GET("/users", getUsers)
-
-	// First time install route, only works when there are no users in the DB yet
-	api.POST("/install", install)
-
-	// Authenticated routes
-	authorized := api.Group("/")
-	authorized.Use(auth)
-	{
-		authorized.POST("/logout", logout)
-
-		authorized.POST("/tracks", addTrack(db))
-		authorized.POST("/tracks/:trackID", updateTrack(db))
-		authorized.POST("/tracks/:trackID/publish", publishTrack(db))
-		authorized.POST("/tracks/:trackID/claim", claimTrack(db))
-		authorized.DELETE("/tracks/:trackID", deleteTrack(db))
-
-		authorized.POST("/users", addUser)
-		authorized.POST("/users/:userID", updateUser)
-		authorized.POST("/users/:userID/password", updateUserPassword)
-	}
-
-	themeStaticDir := path.Join(Config.ThemeDir, db.Hostname)
-	r.Use(static.Serve("/", static.LocalFile(themeStaticDir, false)))
-
-	// Fallback route, just sends the frontend index.html
-	r.NoRoute(func(c *gin.Context) {
-		c.File(path.Join(themeStaticDir, "index.html"))
-	})
-
-	return r
-}
-
-/* Utility
-----------------------------------*/
-type errorResponse struct {
-	Error string `json:"error"`
-}
-
-func adapt(h http.Handler, adapters ...func(http.Handler) http.Handler)
-	http.Handler {
-	for _, adapter := range adapters {
-		h = adapter(h)
-	}
-	return h
-}
-
-/* Authentication
-----------------------------------*/
-
-// Authentication middleware
-func authMiddleware(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(res http.ResponseWriter, req *http.Request)) {
-		session := sessions.Default(c)
-	
-		userIDI := session.Get("userID")
-		userID, ok := userIDI.(string)
-	
-		if !ok || len(userID) == 0 {
-			c.Status(403)
-			c.Abort()
-		} else {
-			c.Next()
-		}
-	}
-}
+const (
+	SessionName = "lnb-session"
+)
 
 // Remembered user tokens. Do not persist across
 // server restarts
@@ -119,6 +26,121 @@ var remembered = make([]rememberedLogin, 0)
 type rememberedLogin struct {
 	userID string
 	Token  string
+}
+
+type HandlerFuncType func(w http.ResponseWriter, r *http.Request)
+
+// Takes the track database a
+// The router initializissociated with the host as only argument
+func InitHostRouter(db *ITrackDatabase, r *mux.Router) {
+	log.Print("initializing router for host " + db.Hostname)
+
+	// Sessions
+	store = sessions.NewCookieStore([]byte(Config.SessionKey))
+
+	// Api set-up and routes
+	api := mux.NewRouter()
+	r.PathPrefix("/api").Handler(http.StripPrefix("/api", mw(api, setContentTypeMiddleware)))
+
+	// Unauthenticated API routes
+	api.HandleFunc("/login", login).
+		Methods("POST")
+	api.HandleFunc("/tracks", getTracks(db)).
+		Methods("GET")
+	api.HandleFunc("/users", getUsers).
+		Methods("GET")
+
+	// First time install route, only works when there are no users in the DB yet
+	api.HandleFunc("/install", install).
+		Methods("POST")
+
+	// Authenticated routes
+	// So what's happening here is kind of confusing:
+
+	// all of these routes require the authMiddleware middleware,
+	// So we use the mw() func to put it in front of our actual handler
+	// the mw function returns a http.Handler, which is why we use api.Handle().
+
+	// The directly used funcs are of type func(http.ResponseWriter, http.Request)
+	// the executed functions are ones that require the track database for the current host,
+	// so they are wrapped in anotehr func that returns a func of the above type.
+
+	// http.HandlerFunc is a convenience method to turn the above func type into a http.Handler
+
+	api.Handle("/logout", mw(http.HandlerFunc(logout), authMiddleware)).
+		Methods("POST")
+
+	api.Handle("/tracks", mw(http.HandlerFunc(addTrack(db)), authMiddleware)).
+		Methods("POST")
+	api.Handle("/tracks/:trackID", mw(http.HandlerFunc(updateTrack(db)), authMiddleware)).
+		Methods("POST")
+	api.Handle("/tracks/:trackID/publish", mw(http.HandlerFunc(publishTrack(db)), authMiddleware)).
+		Methods("POST")
+	api.Handle("/tracks/:trackID/claim", mw(http.HandlerFunc(claimTrack(db)), authMiddleware)).
+		Methods("POST")
+	api.Handle("/tracks/:trackID", mw(http.HandlerFunc(deleteTrack(db)), authMiddleware)).
+		Methods("DELETE")
+
+	api.Handle("/users", mw(http.HandlerFunc(addUser), authMiddleware)).
+		Methods("POST")
+	api.Handle("/users/:userID", mw(http.HandlerFunc(updateUser), authMiddleware)).
+		Methods("POST")
+	api.Handle("/users/:userID/password", mw(http.HandlerFunc(updateUserPassword), authMiddleware)).
+		Methods("POST")
+	/*
+		themeStaticDir := path.Join(Config.ThemeDir, db.Hostname)
+		r.Use(static.Serve("/", static.LocalFile(themeStaticDir, false)))
+
+		// Fallback route, just sends the frontend index.html
+		r.NoRoute(func(c *gin.Context) {
+			c.File(path.Join(themeStaticDir, "index.html"))
+		})
+
+		return r */
+}
+
+/* Utility
+----------------------------------*/
+type errorResponse struct {
+	Error string `json:"error"`
+}
+
+func mw(h http.Handler, adapters ...func(http.Handler) http.Handler) http.Handler {
+	for _, adapter := range adapters {
+		h = adapter(h)
+	}
+	return h
+}
+
+/* Middleware
+----------------------------------*/
+
+// Content-Type json
+func setContentTypeMiddleware(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		h.ServeHTTP(w, r)
+	})
+}
+
+// Authentication
+func authMiddleware(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session, err := store.Get(r, SessionName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		userIDI := session.Values["userID"]
+		userID, ok := userIDI.(string)
+
+		if !ok || len(userID) == 0 {
+			// not allowed
+		} else {
+			h.ServeHTTP(w, r)
+		}
+	})
 }
 
 /* First time setup
@@ -130,7 +152,7 @@ type installRequest struct {
 
 // Accepts admin user credentials for first-time setup.
 // Logs the user in afterwards.
-func install(c *gin.Context) {
+func install(w http.ResponseWriter, r *http.Request) {
 	if len(UserDatabase.Users) == 0 {
 		var requestData installRequest
 		c.BindJSON(&requestData)
@@ -166,7 +188,11 @@ func install(c *gin.Context) {
 		}
 		UserDatabase.addUser(user)
 
-		session := sessions.Default(c)
+		session, err := store.Get(r, SessionName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		session.Set("userName", user.Name)
 		session.Set("userID", user.ID)
 		session.Set("userRole", user.Role)
@@ -180,7 +206,7 @@ func install(c *gin.Context) {
 	}
 }
 
-/* Authentication methods
+/* Authentication Methods
 -------------------------------------------*/
 
 type userRequest struct {
@@ -208,12 +234,17 @@ type authenticatedUserResponse struct {
 	Hosts []string `json:"hosts"`
 }
 
-func login(c *gin.Context) {
-	session := sessions.Default(c)
-	userIDI := session.Get("userID")
-	userNameI := session.Get("userName")
-	userRoleI := session.Get("userRole")
-	userHostsI := session.Get("userHosts")
+func login(w http.ResponseWriter, r *http.Request) {
+	session, err := store.Get(r, SessionName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	userIDI := session.Values["userID"]
+	userNameI := session.Values["userName"]
+	userRoleI := session.Values["userRole"]
+	userHostsI := session.Values["userHosts"]
 
 	if userIDI != nil {
 		userID, ok := userIDI.(string)
@@ -288,8 +319,13 @@ func login(c *gin.Context) {
 	c.JSON(403, errorResponse{"Invalid login data"})
 }
 
-func logout(c *gin.Context) {
-	session := sessions.Default(c)
+func logout(w http.ResponseWriter, r *http.Request) {
+	session, err := store.Get(r, SessionName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	session.Clear()
 	session.Save()
 	c.JSON(200, struct{}{})
@@ -308,27 +344,29 @@ type trackRequest struct {
 	Meta    string `json:"meta"`
 }
 
-func getTracks(db *ITrackDatabase) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		session := sessions.Default(c)
-		userID := session.Get("userID")
-
-		if userID != nil {
-			c.JSON(200, db.Tracks)
-		} else {
-			c.JSON(200, db.getPublishedTracks())
+func getTracks(db *ITrackDatabase) HandlerFuncType {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, err := store.Get(r, SessionName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
+
+		if userIDI != nil {
+			userID, ok := userIDI.(string)
+			if ok && len(userID) > 0 {
+				// send full data
+				return
+			}
+		}
+		// send hafl the data
 	}
 }
 
-func addTrack(db *ITrackDatabase) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func addTrack(db *ITrackDatabase) HandlerFuncType {
+	return func(w http.ResponseWriter, r *http.Request) {
 		var requestData trackRequest
 		c.BindJSON(&requestData)
-		session := sessions.Default(c)
-		userID := session.Get("userID")
-
-		id := userID.(string)
 
 		if len(requestData.Artist) == 0 {
 			c.JSON(400, errorResponse{"Invalid artist"})
@@ -359,6 +397,22 @@ func addTrack(db *ITrackDatabase) gin.HandlerFunc {
 			requestData.Meta = "{}"
 		}
 
+		session, err := store.Get(r, SessionName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		userIDI := session.Values["userID"]
+
+		if userIDI != nil {
+			userID, ok := userIDI.(string)
+			if !ok {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+
 		track := ITrack{
 			ID:       uuid.NewV4().String(),
 			Episode:  nil,
@@ -369,7 +423,7 @@ func addTrack(db *ITrackDatabase) gin.HandlerFunc {
 			Start:    requestData.Start,
 			End:      requestData.End,
 			Meta:     requestData.Meta,
-			Uploader: id,
+			Uploader: userID,
 		}
 		db.addTrack(track)
 
@@ -377,8 +431,8 @@ func addTrack(db *ITrackDatabase) gin.HandlerFunc {
 	}
 }
 
-func updateTrack(db *ITrackDatabase) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func updateTrack(db *ITrackDatabase) HandlerFuncType {
+	return func(w http.ResponseWriter, r *http.Request) {
 		var requestData trackRequest
 		c.BindJSON(&requestData)
 		trackID := c.Param("trackID")
@@ -432,8 +486,8 @@ func updateTrack(db *ITrackDatabase) gin.HandlerFunc {
 	}
 }
 
-func publishTrack(db *ITrackDatabase) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func publishTrack(db *ITrackDatabase) HandlerFuncType {
+	return func(w http.ResponseWriter, r *http.Request) {
 		trackID := c.Param("trackID")
 		track := db.getTrackById(trackID)
 
@@ -454,8 +508,8 @@ func publishTrack(db *ITrackDatabase) gin.HandlerFunc {
 	}
 }
 
-func claimTrack(db *ITrackDatabase) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func claimTrack(db *ITrackDatabase) HandlerFuncType {
+	return func(w http.ResponseWriter, r *http.Request) {
 		trackID := c.Param("trackID")
 		track := db.getTrackById(trackID)
 
@@ -465,8 +519,13 @@ func claimTrack(db *ITrackDatabase) gin.HandlerFunc {
 				return
 			}
 
-			session := sessions.Default(c)
-			userID := session.Get("userID")
+			session, err := store.Get(r, SessionName)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			userID := session.Values["userID"]
 			userIDstring := userID.(string)
 			track.Uploader = userIDstring
 			db.write()
@@ -478,8 +537,8 @@ func claimTrack(db *ITrackDatabase) gin.HandlerFunc {
 	}
 }
 
-func deleteTrack(db *ITrackDatabase) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func deleteTrack(db *ITrackDatabase) HandlerFuncType {
+	return func(w http.ResponseWriter, r *http.Request) {
 		trackID := c.Param("trackID")
 		track := db.getTrackById(trackID)
 
@@ -498,9 +557,14 @@ func deleteTrack(db *ITrackDatabase) gin.HandlerFunc {
 /* User CRU(D)
 ----------------------------------*/
 
-func getUsers(c *gin.Context) {
-	session := sessions.Default(c)
-	userRole := session.Get("userRole")
+func getUsers(w http.ResponseWriter, r *http.Request) {
+	session, err := store.Get(r, SessionName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	userRole := session.Values["userRole"]
 
 	if userRole == "admin" {
 		response := make([]authenticatedUserResponse, 0)
@@ -521,9 +585,14 @@ func getUsers(c *gin.Context) {
 	}
 }
 
-func addUser(c *gin.Context) {
-	session := sessions.Default(c)
-	userRole := session.Get("userRole")
+func addUser(w http.ResponseWriter, r *http.Request) {
+	session, err := store.Get(r, SessionName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	userRole := session.Values["userRole"]
 
 	if userRole != "admin" {
 		c.JSON(403, errorResponse{"Insufficient rights"})
@@ -578,7 +647,7 @@ func addUser(c *gin.Context) {
 	c.JSON(200, userResponse{newUser.ID, newUser.Name})
 }
 
-func updateUser(c *gin.Context) {
+func updateUser(w http.ResponseWriter, r *http.Request) {
 	var requestData userRequest
 	c.BindJSON(&requestData)
 	userID := c.Param("userID")
@@ -616,11 +685,16 @@ type passwordUpdateRequest struct {
 	PasswordRepeat      string `json:"passwordRepeat"`
 }
 
-func updateUserPassword(c *gin.Context) {
-	session := sessions.Default(c)
-	userRole := session.Get("userRole").(string)
-	userID := session.Get("userID").(string)
-	currUserPassword := session.Get("userPassword").([]byte)
+func updateUserPassword(w http.ResponseWriter, r *http.Request) {
+	session, err := store.Get(r, SessionName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	userRole := session.Values["userRole"].(string)
+	userID := session.Values["userID"].(string)
+	currUserPassword := session.Values["userPassword"].([]byte)
 	userToUpdateId := c.Param("userID")
 	var requestData passwordUpdateRequest
 	c.BindJSON(&requestData)
