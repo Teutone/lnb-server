@@ -8,8 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
-
+	"github.com/gorilla/mux"
 	"golang.org/x/crypto/acme/autocert"
 )
 
@@ -23,14 +22,15 @@ func main() {
 	InitConfig(configFile)
 	InitUserDatabase()
 
+	router := mux.NewRouter()
+
 	// Loop over the hosts defined in the config so we can setup the vhosts
 	hostnames := make([]string, 0)
-	var vhosts vHosts
-	for _, vhost := range Config.Sites {
-		trackDb := InitTrackDatabase(vhost.Hostname)
-		ginEngine := GetRouter(trackDb)
-		vhosts = append(vhosts, vHost{vhost.Hostname, ginEngine})
-		hostnames = append(hostnames, vhost.Hostname)
+	for _, vConfig := range Config.Sites {
+		trackDb := InitTrackDatabase(vConfig.Hostname)
+		vRouter := router.Host(vConfig.Hostname).Subrouter()
+		InitHostRouter(trackDb, vRouter)
+		hostnames = append(hostnames, vConfig.Hostname)
 	}
 
 	if Config.LetsEncryptEnabled {
@@ -44,7 +44,7 @@ func main() {
 		s := &http.Server{
 			Addr:         ":https",
 			TLSConfig:    &tls.Config{GetCertificate: m.GetCertificate},
-			Handler:      vhosts,
+			Handler:      router,
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 10 * time.Second,
 		}
@@ -54,27 +54,6 @@ func main() {
 		// No letsencrypt; just listen on the specified port
 		portString := strconv.FormatInt(int64(Config.Port), 10)
 		log.Println("Listening on port :" + portString)
-		log.Fatal(http.ListenAndServe(":"+portString, vhosts))
+		log.Fatal(http.ListenAndServe(":"+portString, router))
 	}
-}
-
-type vHost struct {
-	hostname  string
-	ginEngine *gin.Engine
-}
-
-type vHosts []vHost
-
-// This is the http handler function, so we can provide vhosts into
-// the http.ListenAndServe function
-func (vhs vHosts) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	for _, vhost := range vhs {
-		if vhost.hostname == r.Host {
-			vhost.ginEngine.ServeHTTP(w, r)
-			return
-		}
-	}
-
-	w.WriteHeader(http.StatusNotFound)
-	w.Write([]byte("404 Not Found"))
 }

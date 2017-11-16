@@ -1,13 +1,18 @@
 package main
 
 import (
+	"net/http"
 	"log"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/static"
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/mux"
 	uuid "github.com/satori/go.uuid"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -17,19 +22,18 @@ var store *sessions.CookieStore
 
 // The router initializing function.
 // Takes the track database associated with the host as only argument
-func GetRouter(db *ITrackDatabase) *gin.Engine {
-	log.Print("initializing server for host " + db.Hostname)
+func InitHostRouter(db *ITrackDatabase, r *mux.Router) {
+	log.Print("initializing router for host " + db.Hostname)
 	// Creates a router without any middleware by default
-	r := gin.New()
 
 	// Logging and default errors
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
-	r.Static("/static", Config.ThemeDir)
 
 	// Sessions
+	sessionName := "lnb-session" + strings.Replace(db.Hostname, ":", "-", -1)
 	store := sessions.NewCookieStore([]byte(Config.SessionKey))
-	r.Use(sessions.Sessions("lnb-session", store))
+	r.Use(sessions.Sessions(sessionName, store))
 
 	// Api set-up and routes
 	api := r.Group("/api")
@@ -63,9 +67,12 @@ func GetRouter(db *ITrackDatabase) *gin.Engine {
 		authorized.POST("/users/:userID/password", updateUserPassword)
 	}
 
+	themeStaticDir := path.Join(Config.ThemeDir, db.Hostname)
+	r.Use(static.Serve("/", static.LocalFile(themeStaticDir, false)))
+
 	// Fallback route, just sends the frontend index.html
 	r.NoRoute(func(c *gin.Context) {
-		c.File(path.Join(Config.ThemeDir, "index.html"))
+		c.File(path.Join(themeStaticDir, "index.html"))
 	})
 
 	return r
@@ -77,20 +84,31 @@ type errorResponse struct {
 	Error string `json:"error"`
 }
 
+func adapt(h http.Handler, adapters ...func(http.Handler) http.Handler)
+	http.Handler {
+	for _, adapter := range adapters {
+		h = adapter(h)
+	}
+	return h
+}
+
 /* Authentication
 ----------------------------------*/
 
 // Authentication middleware
-func auth(c *gin.Context) {
-	session := sessions.Default(c)
-	userIDI := session.Get("userID")
-	userID, ok := userIDI.(string)
-
-	if !ok || len(userID) == 0 {
-		c.Status(403)
-		c.Abort()
-	} else {
-		c.Next()
+func authMiddleware(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(res http.ResponseWriter, req *http.Request)) {
+		session := sessions.Default(c)
+	
+		userIDI := session.Get("userID")
+		userID, ok := userIDI.(string)
+	
+		if !ok || len(userID) == 0 {
+			c.Status(403)
+			c.Abort()
+		} else {
+			c.Next()
+		}
 	}
 }
 
@@ -431,6 +449,7 @@ func publishTrack(db *ITrackDatabase) gin.HandlerFunc {
 			c.JSON(200, track)
 		} else {
 			c.JSON(404, errorResponse{"Track not found"})
+			c.Abort()
 		}
 	}
 }
@@ -454,6 +473,7 @@ func claimTrack(db *ITrackDatabase) gin.HandlerFunc {
 			c.JSON(200, track)
 		} else {
 			c.JSON(404, errorResponse{"Track not found"})
+			c.Abort()
 		}
 	}
 }
@@ -465,6 +485,7 @@ func deleteTrack(db *ITrackDatabase) gin.HandlerFunc {
 
 		if track == nil {
 			c.JSON(404, errorResponse{"Track not found"})
+			c.Abort()
 		} else if track.Episode != nil {
 			c.JSON(403, errorResponse{"Track already published"})
 		} else {
