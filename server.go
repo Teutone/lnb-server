@@ -361,6 +361,7 @@ func getTracks(db *ITrackDatabase) HandlerFuncType {
 			return
 		}
 
+		userIDI := session.Values["userID"]
 		if userIDI != nil {
 			userID, ok := userIDI.(string)
 			if ok && len(userID) > 0 {
