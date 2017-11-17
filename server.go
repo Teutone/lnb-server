@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"path"
@@ -17,17 +18,8 @@ import (
 var store *sessions.CookieStore
 
 const (
-	SessionName = "lnb-session"
+	DefaultSession = "lnb-session"
 )
-
-// Remembered user tokens. Do not persist across
-// server restarts
-var remembered = make([]rememberedLogin, 0)
-
-type rememberedLogin struct {
-	userID string
-	Token  string
-}
 
 type HandlerFuncType func(w http.ResponseWriter, r *http.Request)
 
@@ -44,11 +36,11 @@ func InitHostRouter(db *ITrackDatabase, r *mux.Router) {
 	r.PathPrefix("/api").Handler(http.StripPrefix("/api", mw(api, setContentTypeMiddleware)))
 
 	// Unauthenticated API routes
-	api.HandleFunc("/login", login).
+	api.HandleFunc("/login", login(db.Hostname)).
 		Methods("POST")
 	api.HandleFunc("/tracks", getTracks(db)).
 		Methods("GET")
-	api.HandleFunc("/users", getUsers).
+	api.HandleFunc("/users", getUsers(db.Hostname)).
 		Methods("GET")
 
 	// First time install route, only works when there are no users in the DB yet
@@ -82,7 +74,7 @@ func InitHostRouter(db *ITrackDatabase, r *mux.Router) {
 	api.Handle("/tracks/:trackID", mw(http.HandlerFunc(deleteTrack(db)), authMiddleware)).
 		Methods("DELETE")
 
-	api.Handle("/users", mw(http.HandlerFunc(addUser), authMiddleware)).
+	api.Handle("/users", mw(http.HandlerFunc(addUser(db.Hostname)), authMiddleware)).
 		Methods("POST")
 	api.Handle("/users/:userID", mw(http.HandlerFunc(updateUser), authMiddleware)).
 		Methods("POST")
@@ -91,7 +83,8 @@ func InitHostRouter(db *ITrackDatabase, r *mux.Router) {
 
 	/* Static files */
 	themeStaticDir := path.Join(Config.ThemeDir, db.Hostname)
-	r.PathPrefix("/").Handler(http.FileServer(http.Dir(themeStaticDir)))
+	log.Printf("serving static on /static/ from %s", themeStaticDir)
+	r.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(http.Dir(themeStaticDir))))
 
 	/* The 404 handler just returns the index.html */
 	r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -101,9 +94,6 @@ func InitHostRouter(db *ITrackDatabase, r *mux.Router) {
 
 /* Utility
 ----------------------------------*/
-type errorResponse struct {
-	Error string `json:"error"`
-}
 
 func mw(h http.Handler, adapters ...func(http.Handler) http.Handler) http.Handler {
 	for _, adapter := range adapters {
@@ -112,12 +102,18 @@ func mw(h http.Handler, adapters ...func(http.Handler) http.Handler) http.Handle
 	return h
 }
 
+func throwError(w http.ResponseWriter, message string, code int) {
+	w.WriteHeader(code)
+	fmt.Fprintf(w, `{"error":%q}`, message)
+}
+
 /* Middleware
 ----------------------------------*/
 
 // Content-Type json
 func setContentTypeMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Println("setting content type json for api")
 		w.Header().Set("Content-Type", "application/json")
 		h.ServeHTTP(w, r)
 	})
@@ -126,9 +122,11 @@ func setContentTypeMiddleware(h http.Handler) http.Handler {
 // Authentication
 func authMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		session, err := store.Get(r, SessionName)
+		log.Println("checking auth")
+
+		session, err := store.Get(r, DefaultSession)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			throwError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -136,7 +134,7 @@ func authMiddleware(h http.Handler) http.Handler {
 		userID, ok := userIDI.(string)
 
 		if !ok || len(userID) == 0 {
-			// not allowed
+			throwError(w, "Nuh-uh", http.StatusForbidden)
 		} else {
 			h.ServeHTTP(w, r)
 		}
@@ -157,23 +155,23 @@ func install(w http.ResponseWriter, r *http.Request) {
 		var requestData installRequest
 		decoder := json.NewDecoder(r.Body)
 		if decoder.Decode(&requestData) != nil {
-			http.Error(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+			throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
 		}
 		defer r.Body.Close()
 
 		if len(requestData.Name) == 0 {
-			http.Error(w, "Invalid name", http.StatusBadRequest)
+			throwError(w, "Invalid name", http.StatusBadRequest)
 			return
 		}
 
 		if len(requestData.Password) < 12 {
-			http.Error(w, "Invalid Password. Minimum length is 12", http.StatusBadRequest)
+			throwError(w, "Invalid Password. Minimum length is 12", http.StatusBadRequest)
 			return
 		}
 
 		password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
 		if err != nil {
-			http.Error(w, "Something went wrong", http.StatusInternalServerError)
+			throwError(w, "Something went wrong", http.StatusInternalServerError)
 			return
 		}
 
@@ -192,9 +190,9 @@ func install(w http.ResponseWriter, r *http.Request) {
 		}
 		UserDatabase.addUser(user)
 
-		session, err := store.Get(r, SessionName)
+		session, err := store.Get(r, DefaultSession)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			throwError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		session.Values["userName"] = user.Name
@@ -206,7 +204,7 @@ func install(w http.ResponseWriter, r *http.Request) {
 
 		json.NewEncoder(w).Encode(authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
 	} else {
-		http.Error(w, "Already set up", http.StatusForbidden)
+		throwError(w, "Already set up", http.StatusForbidden)
 	}
 }
 
@@ -238,104 +236,86 @@ type authenticatedUserResponse struct {
 	Hosts []string `json:"hosts"`
 }
 
-func login(w http.ResponseWriter, r *http.Request) {
-	session, err := store.Get(r, SessionName)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	userIDI := session.Values["userID"]
-	userNameI := session.Values["userName"]
-	userRoleI := session.Values["userRole"]
-	userHostsI := session.Values["userHosts"]
-
-	if userIDI != nil {
-		userID, ok := userIDI.(string)
-		userName := userNameI.(string)
-		userRole := userRoleI.(string)
-		userHosts := userHostsI.([]string)
-
-		if ok && len(userID) > 0 {
-			json.NewEncoder(w).Encode(authenticatedUserResponse{userID, userName, userRole, userHosts})
+func login(host string) HandlerFuncType {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Short term session
+		session, err := store.Get(r, DefaultSession)
+		if err != nil {
+			throwError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-	}
 
-	token, err := c.Cookie("lnb-r")
-	if err == nil {
-		for _, rToken := range remembered {
-			if rToken.Token == token {
-				user := UserDatabase.getUserById(rToken.userID)
-				if user != nil {
-					json.NewEncoder(w).Encode(authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
-				}
+		userIDI := session.Values["userID"]
+		userNameI := session.Values["userName"]
+		userRoleI := session.Values["userRole"]
+		userHostsI := session.Values["userHosts"]
+
+		if userIDI != nil {
+			userID, ok := userIDI.(string)
+			userName := userNameI.(string)
+			userRole := userRoleI.(string)
+			userHosts := userHostsI.([]string)
+
+			if ok && len(userID) > 0 {
+				json.NewEncoder(w).Encode(authenticatedUserResponse{userID, userName, userRole, userHosts})
+				return
 			}
 		}
-	}
 
-	// Get request body
-	var requestData loginRequest
-	decoder := json.NewDecoder(r.Body)
-	if decoder.Decode(&requestData) != nil {
-		http.Error(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
-	}
-	defer r.Body.Close()
-
-	user := UserDatabase.getUserByName(requestData.Name)
-	if user != nil {
-		if !user.inHost(r.Host) {
-			http.Error(w, "Invalid login data", http.StatusForbidden)
-			return
+		// Get request body
+		var requestData loginRequest
+		decoder := json.NewDecoder(r.Body)
+		if decoder.Decode(&requestData) != nil {
+			throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
 		}
+		defer r.Body.Close()
 
-		err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(requestData.Password))
-		if err == nil {
-			session.Values["userName"] = user.Name
-			session.Values["userID"] = user.ID
-			session.Values["userRole"] = user.Role
-			session.Values["userHosts"] = user.Hosts
-			session.Values["userPassword"] = user.Password
-			session.Save(r, w)
+		user := UserDatabase.getUserByName(requestData.Name)
+		if user != nil {
+			if !user.inHost(host) {
+				throwError(w, "Invalid login data", http.StatusForbidden)
+				return
+			}
 
-			/* if requestData.Remember {
-				token, err := GenerateRandomString(32)
-				if err != nil {
-					http.Error(w, "Something went wrong", http.StatusInternalServerError)
-					return
+			err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(requestData.Password))
+			if err == nil {
+				oneHour := 60 * 60
+				session.Values["userName"] = user.Name
+				session.Values["userID"] = user.ID
+				session.Values["userRole"] = user.Role
+				session.Values["userHosts"] = user.Hosts
+				session.Values["userPassword"] = user.Password
+				session.Options = &sessions.Options{
+					Path:     "/",
+					Domain:   host,
+					MaxAge:   oneHour,
+					Secure:   true,
+					HttpOnly: true,
 				}
 
-				oneYearSeconds := 60 * 60 * 24 * 365
-				c.SetCookie("lnb-r", token, oneYearSeconds, "/", c.Request.Host, true, true)
-				remembered = append(remembered, rememberedLogin{user.ID, token})
-				select {
-				case <-time.After(time.Duration(oneYearSeconds) * time.Second):
-					for i := range remembered {
-						r := &remembered[i]
-						if r.userID == user.ID {
-							remembered = append(remembered[:i], remembered[i+1:]...)
-							break
-						}
-					}
+				if requestData.Remember {
+					oneYear := 60 * 60 * 24 * 365
+					session.Options.MaxAge = oneYear
 				}
-			} */
 
-			json.NewEncoder(w).Encode(authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
-			return
+				session.Save(r, w)
+				json.NewEncoder(w).Encode(authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
+				return
+			}
 		}
-	}
 
-	http.Error(w, "Invalid login data", http.StatusForbidden)
+		throwError(w, "Invalid login data", http.StatusForbidden)
+	}
 }
 
 func logout(w http.ResponseWriter, r *http.Request) {
-	session, err := store.Get(r, SessionName)
+	session, err := store.Get(r, DefaultSession)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		throwError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	session.Clear()
+	session.Options.MaxAge = -1
 	session.Save(r, w)
 	json.NewEncoder(w).Encode(struct{}{})
 }
@@ -343,6 +323,7 @@ func logout(w http.ResponseWriter, r *http.Request) {
 /* Track CRUD
 ----------------------------------*/
 
+// Used for track adding and updating
 type trackRequest struct {
 	Artist  string `json:"artist"`
 	Title   string `json:"title"`
@@ -353,11 +334,17 @@ type trackRequest struct {
 	Meta    string `json:"meta"`
 }
 
+/* Gets the current track list
+ *
+ * If logged in, the user gets all tracks,
+ * if not, just the published ones.
+ *
+ *******************************************/
 func getTracks(db *ITrackDatabase) HandlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
-		session, err := store.Get(r, SessionName)
+		session, err := store.Get(r, DefaultSession)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			throwError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -365,14 +352,20 @@ func getTracks(db *ITrackDatabase) HandlerFuncType {
 		if userIDI != nil {
 			userID, ok := userIDI.(string)
 			if ok && len(userID) > 0 {
-				// send full data
+				json.NewEncoder(w).Encode(db.Tracks)
 				return
 			}
 		}
-		// send half the data
+		json.NewEncoder(w).Encode(db.getPublishedTracks())
 	}
 }
 
+/* Adds a track
+ *
+ * Does super basic validation,
+ * I don't care what you choose to put in your files
+ *
+ **************************************************/
 func addTrack(db *ITrackDatabase) HandlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
 
@@ -380,32 +373,32 @@ func addTrack(db *ITrackDatabase) HandlerFuncType {
 		var requestData trackRequest
 		decoder := json.NewDecoder(r.Body)
 		if decoder.Decode(&requestData) != nil {
-			http.Error(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+			throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
 		}
 		defer r.Body.Close()
 
 		if len(requestData.Artist) == 0 {
-			http.Error(w, "Invalid artist", http.StatusBadRequest)
+			throwError(w, "Invalid artist", http.StatusBadRequest)
 			return
 		}
 
 		if len(requestData.Title) == 0 {
-			http.Error(w, "Invalid title", http.StatusBadRequest)
+			throwError(w, "Invalid title", http.StatusBadRequest)
 			return
 		}
 
 		if len(requestData.Release) == 0 {
-			http.Error(w, "Invalid release", http.StatusBadRequest)
+			throwError(w, "Invalid release", http.StatusBadRequest)
 			return
 		}
 
 		if len(requestData.URL) == 0 {
-			http.Error(w, "Invalid URL", http.StatusBadRequest)
+			throwError(w, "Invalid URL", http.StatusBadRequest)
 			return
 		}
 
 		if requestData.End == 0 {
-			http.Error(w, "End cannot be zero", http.StatusBadRequest)
+			throwError(w, "End cannot be zero", http.StatusBadRequest)
 			return
 		}
 
@@ -413,20 +406,17 @@ func addTrack(db *ITrackDatabase) HandlerFuncType {
 			requestData.Meta = "{}"
 		}
 
-		session, err := store.Get(r, SessionName)
+		session, err := store.Get(r, DefaultSession)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			throwError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		userIDI := session.Values["userID"]
-		var userID string
-		if userIDI != nil {
-			userID, ok := userIDI.(string)
-			if !ok {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
+		userID, ok := userIDI.(string)
+		if !ok {
+			throwError(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 
 		track := ITrack{
@@ -447,40 +437,45 @@ func addTrack(db *ITrackDatabase) HandlerFuncType {
 	}
 }
 
+/* Update track
+ *
+ * Updates a track, whether published or unpublished
+ *
+ ******************************************************/
 func updateTrack(db *ITrackDatabase) HandlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Get request body
 		var requestData trackRequest
 		decoder := json.NewDecoder(r.Body)
 		if decoder.Decode(&requestData) != nil {
-			http.Error(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+			throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
 		}
 		defer r.Body.Close()
 		params := mux.Vars(r)
 		trackID := params["trackID"]
 
 		if len(requestData.Artist) == 0 {
-			http.Error(w, "Invalid artist", http.StatusBadRequest)
+			throwError(w, "Invalid artist", http.StatusBadRequest)
 			return
 		}
 
 		if len(requestData.Title) == 0 {
-			http.Error(w, "Invalid title", http.StatusBadRequest)
+			throwError(w, "Invalid title", http.StatusBadRequest)
 			return
 		}
 
 		if len(requestData.Release) == 0 {
-			http.Error(w, "Invalid release", http.StatusBadRequest)
+			throwError(w, "Invalid release", http.StatusBadRequest)
 			return
 		}
 
 		if len(requestData.URL) == 0 {
-			http.Error(w, "Invalid URL", http.StatusBadRequest)
+			throwError(w, "Invalid URL", http.StatusBadRequest)
 			return
 		}
 
 		if requestData.End == 0 {
-			http.Error(w, "End cannot be zero", http.StatusBadRequest)
+			throwError(w, "End cannot be zero", http.StatusBadRequest)
 			return
 		}
 
@@ -502,11 +497,14 @@ func updateTrack(db *ITrackDatabase) HandlerFuncType {
 
 			json.NewEncoder(w).Encode(*track)
 		} else {
-			http.Error(w, "Track not found", http.StatusNotFound)
+			throwError(w, "Track not found", http.StatusNotFound)
 		}
 	}
 }
 
+/* Publishes a track with given ID
+ *
+ ***************************************/
 func publishTrack(db *ITrackDatabase) HandlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
 		params := mux.Vars(r)
@@ -516,7 +514,7 @@ func publishTrack(db *ITrackDatabase) HandlerFuncType {
 		if track != nil {
 			if track.Episode != nil {
 				epString := strconv.FormatInt(int64(*track.Episode), 10)
-				http.Error(w, "Track already published at episode "+epString, http.StatusForbidden)
+				throwError(w, "Track already published at episode "+epString, http.StatusForbidden)
 				return
 			}
 
@@ -525,11 +523,16 @@ func publishTrack(db *ITrackDatabase) HandlerFuncType {
 			db.write()
 			json.NewEncoder(w).Encode(track)
 		} else {
-			http.Error(w, "Track not found", http.StatusNotFound)
+			throwError(w, "Track not found", http.StatusNotFound)
 		}
 	}
 }
 
+/* Claims a track
+ *
+ * Used for legacy Databases, users can say if they uploaded this track
+ *
+ ***************************************/
 func claimTrack(db *ITrackDatabase) HandlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
 		params := mux.Vars(r)
@@ -538,13 +541,13 @@ func claimTrack(db *ITrackDatabase) HandlerFuncType {
 
 		if track != nil {
 			if len(track.Uploader) != 0 {
-				http.Error(w, "Track already claimed", http.StatusBadRequest)
+				throwError(w, "Track already claimed", http.StatusBadRequest)
 				return
 			}
 
-			session, err := store.Get(r, SessionName)
+			session, err := store.Get(r, DefaultSession)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				throwError(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 
@@ -554,7 +557,7 @@ func claimTrack(db *ITrackDatabase) HandlerFuncType {
 			db.write()
 			json.NewEncoder(w).Encode(track)
 		} else {
-			http.Error(w, "Track not found", http.StatusNotFound)
+			throwError(w, "Track not found", http.StatusNotFound)
 		}
 	}
 }
@@ -566,9 +569,9 @@ func deleteTrack(db *ITrackDatabase) HandlerFuncType {
 		track := db.getTrackById(trackID)
 
 		if track == nil {
-			http.Error(w, "Track not found", http.StatusNotFound)
+			throwError(w, "Track not found", http.StatusNotFound)
 		} else if track.Episode != nil {
-			http.Error(w, "Track already published", http.StatusForbidden)
+			throwError(w, "Track already published", http.StatusForbidden)
 		} else {
 			deletedTrack := db.deleteTrack(trackID)
 			json.NewEncoder(w).Encode(*deletedTrack)
@@ -579,100 +582,104 @@ func deleteTrack(db *ITrackDatabase) HandlerFuncType {
 /* User CRU(D)
 ----------------------------------*/
 
-func getUsers(w http.ResponseWriter, r *http.Request) {
-	session, err := store.Get(r, SessionName)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	userRole := session.Values["userRole"]
-
-	if userRole == "admin" {
-		response := make([]authenticatedUserResponse, 0)
-		for _, user := range UserDatabase.Users {
-			if user.inHost(r.Host) {
-				response = append(response, authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
-			}
+func getUsers(host string) HandlerFuncType {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, err := store.Get(r, DefaultSession)
+		if err != nil {
+			throwError(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
-		json.NewEncoder(w).Encode(response)
-	} else {
-		response := make([]userResponse, 0)
-		for _, user := range UserDatabase.Users {
-			if user.inHost(r.Host) {
-				response = append(response, userResponse{user.ID, user.Name})
+
+		userRole := session.Values["userRole"]
+
+		if userRole == "admin" {
+			response := make([]authenticatedUserResponse, 0)
+			for _, user := range UserDatabase.Users {
+				if user.inHost(host) {
+					response = append(response, authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
+				}
 			}
+			json.NewEncoder(w).Encode(response)
+		} else {
+			response := make([]userResponse, 0)
+			for _, user := range UserDatabase.Users {
+				if user.inHost(host) {
+					response = append(response, userResponse{user.ID, user.Name})
+				}
+			}
+			json.NewEncoder(w).Encode(response)
 		}
-		json.NewEncoder(w).Encode(response)
 	}
 }
 
-func addUser(w http.ResponseWriter, r *http.Request) {
-	session, err := store.Get(r, SessionName)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+func addUser(host string) HandlerFuncType {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, err := store.Get(r, DefaultSession)
+		if err != nil {
+			throwError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		userRole := session.Values["userRole"]
+
+		if userRole != "admin" {
+			throwError(w, "Insufficient rights", http.StatusForbidden)
+			return
+		}
+
+		// Get request body
+		var requestData userRequest
+		decoder := json.NewDecoder(r.Body)
+		if decoder.Decode(&requestData) != nil {
+			throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+			return
+		}
+		defer r.Body.Close()
+
+		if len(requestData.Name) == 0 {
+			throwError(w, "Invalid name", http.StatusBadRequest)
+			return
+		}
+
+		if len(requestData.Password) < 12 {
+			throwError(w, "Invalid Password. Minimum length is 12", http.StatusBadRequest)
+			return
+		}
+
+		if len(requestData.Role) == 0 || (requestData.Role != "submitter" && requestData.Role != "admin") {
+			throwError(w, "Invalid Role. Provide either 'admin' or 'submitter'", http.StatusBadRequest)
+			return
+		}
+
+		if len(requestData.Hosts) == 0 {
+			requestData.Hosts = append(requestData.Hosts, host)
+		}
+
+		user := UserDatabase.getUserByName(requestData.Name)
+
+		if len(user.Name) > 0 {
+			throwError(w, "User already exists", http.StatusBadRequest)
+			return
+		}
+
+		password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
+		if err != nil {
+			throwError(w, "Something went wrong", http.StatusInternalServerError)
+			return
+		}
+
+		id := uuid.NewV4()
+		newUser := IUser{
+			id.String(),
+			requestData.Name,
+			string(password),
+			requestData.Role,
+			requestData.Hosts,
+		}
+		UserDatabase.addUser(newUser)
+
+		json.NewEncoder(w).Encode(userResponse{newUser.ID, newUser.Name})
 	}
-
-	userRole := session.Values["userRole"]
-
-	if userRole != "admin" {
-		http.Error(w, "Insufficient rights", http.StatusForbidden)
-		return
-	}
-
-	// Get request body
-	var requestData userRequest
-	decoder := json.NewDecoder(r.Body)
-	if decoder.Decode(&requestData) != nil {
-		http.Error(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-
-	if len(requestData.Name) == 0 {
-		http.Error(w, "Invalid name", http.StatusBadRequest)
-		return
-	}
-
-	if len(requestData.Password) < 12 {
-		http.Error(w, "Invalid Password. Minimum length is 12", http.StatusBadRequest)
-		return
-	}
-
-	if len(requestData.Role) == 0 || (requestData.Role != "submitter" && requestData.Role != "admin") {
-		http.Error(w, "Invalid Role. Provide either 'admin' or 'submitter'", http.StatusBadRequest)
-		return
-	}
-
-	if len(requestData.Hosts) == 0 {
-		requestData.Hosts = append(requestData.Hosts, r.Host)
-	}
-
-	user := UserDatabase.getUserByName(requestData.Name)
-
-	if len(user.Name) > 0 {
-		http.Error(w, "User already exists", http.StatusBadRequest)
-		return
-	}
-
-	password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
-	if err != nil {
-		http.Error(w, "Something went wrong", http.StatusInternalServerError)
-		return
-	}
-
-	id := uuid.NewV4()
-	newUser := IUser{
-		id.String(),
-		requestData.Name,
-		string(password),
-		requestData.Role,
-		requestData.Hosts,
-	}
-	UserDatabase.addUser(newUser)
-
-	json.NewEncoder(w).Encode(userResponse{newUser.ID, newUser.Name})
 }
 
 func updateUser(w http.ResponseWriter, r *http.Request) {
@@ -680,19 +687,19 @@ func updateUser(w http.ResponseWriter, r *http.Request) {
 	var requestData userRequest
 	decoder := json.NewDecoder(r.Body)
 	if decoder.Decode(&requestData) != nil {
-		http.Error(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+		throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
 	}
 	defer r.Body.Close()
 	params := mux.Vars(r)
 	userID := params["userID"]
 
 	if len(requestData.Name) == 0 {
-		http.Error(w, "Invalid name", http.StatusBadRequest)
+		throwError(w, "Invalid name", http.StatusBadRequest)
 		return
 	}
 
 	if len(requestData.Password) < 12 {
-		http.Error(w, "Invalid Password. Minimum length is 12", http.StatusBadRequest)
+		throwError(w, "Invalid Password. Minimum length is 12", http.StatusBadRequest)
 		return
 	}
 
@@ -701,7 +708,7 @@ func updateUser(w http.ResponseWriter, r *http.Request) {
 	if len(user.Name) > 0 {
 		password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
 		if err != nil {
-			http.Error(w, "Something went wrong", http.StatusInternalServerError)
+			throwError(w, "Something went wrong", http.StatusInternalServerError)
 			return
 		}
 
@@ -710,7 +717,7 @@ func updateUser(w http.ResponseWriter, r *http.Request) {
 		UserDatabase.write()
 		json.NewEncoder(w).Encode(authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
 	} else {
-		http.Error(w, "User not found", http.StatusNotFound)
+		throwError(w, "User not found", http.StatusNotFound)
 	}
 }
 
@@ -721,9 +728,9 @@ type passwordUpdateRequest struct {
 }
 
 func updateUserPassword(w http.ResponseWriter, r *http.Request) {
-	session, err := store.Get(r, SessionName)
+	session, err := store.Get(r, DefaultSession)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		throwError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -738,24 +745,24 @@ func updateUserPassword(w http.ResponseWriter, r *http.Request) {
 	var requestData passwordUpdateRequest
 	decoder := json.NewDecoder(r.Body)
 	if decoder.Decode(&requestData) != nil {
-		http.Error(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+		throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
 	}
 	defer r.Body.Close()
 
 	if bcrypt.CompareHashAndPassword(currUserPassword, []byte(requestData.CurrentUserPassword)) != nil {
-		http.Error(w, "Incorrect current password", http.StatusForbidden)
+		throwError(w, "Incorrect current password", http.StatusForbidden)
 		return
 	}
 
 	if userRole == "admin" || userID == userToUpdateID {
 		if requestData.Password != requestData.PasswordRepeat {
-			http.Error(w, "Passwords do not match", http.StatusBadRequest)
+			throwError(w, "Passwords do not match", http.StatusBadRequest)
 			return
 		}
 
 		password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
 		if err != nil {
-			http.Error(w, "Something went wrong", http.StatusInternalServerError)
+			throwError(w, "Something went wrong", http.StatusInternalServerError)
 			return
 		}
 
@@ -764,6 +771,6 @@ func updateUserPassword(w http.ResponseWriter, r *http.Request) {
 		UserDatabase.write()
 		json.NewEncoder(w).Encode(authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
 	} else {
-		http.Error(w, "Insufficient rights", http.StatusForbidden)
+		throwError(w, "Insufficient rights", http.StatusForbidden)
 	}
 }

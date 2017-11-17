@@ -49,6 +49,7 @@ func InitUserDatabase() {
 
 	// create file if not exists
 	if os.IsNotExist(err) {
+		log.Printf("database file does not exist, creating it at %s", UserDatabase.File)
 		var file, err = os.Create(UserDatabase.File)
 		if err != nil {
 			log.Fatal(err)
@@ -69,6 +70,8 @@ func InitUserDatabase() {
 		}
 		json.Unmarshal(databaseContents, &UserDatabase.Users)
 	}
+
+	log.Printf("found %d users", len(UserDatabase.Users))
 }
 
 func (db *IUserDatabase) write() {

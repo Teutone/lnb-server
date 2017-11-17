@@ -28,7 +28,7 @@ type ITrackDatabase struct {
 }
 
 func InitTrackDatabase(hostname string) *ITrackDatabase {
-	log.Print("initializing track database for host " + hostname)
+	log.Printf("initializing track database for host %s", hostname)
 
 	if Config.DataDir == "" {
 		log.Fatal("config.dataDir has to be set // tracks")
@@ -44,6 +44,7 @@ func InitTrackDatabase(hostname string) *ITrackDatabase {
 
 	// create file if not exists
 	if os.IsNotExist(err) {
+		log.Printf("database file does not exist, creating it at %s", database.File)
 		var file, err = os.Create(database.File)
 		if err != nil {
 			log.Fatal(err)
@@ -71,11 +72,14 @@ func InitTrackDatabase(hostname string) *ITrackDatabase {
 			log.Fatal(err)
 		}
 	}
+
+	log.Printf("using database file %s", database.File)
+	log.Printf("found %d tracks on %s", len(database.Tracks), hostname)
 	return &database
 }
 
 func (db *ITrackDatabase) write() {
-	log.Print("writing track database file for host " + db.Hostname)
+	log.Printf("writing track database file for host %s", db.Hostname)
 
 	dbString, err := json.Marshal(&db.Tracks)
 	if err != nil {

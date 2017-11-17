@@ -7,11 +7,11 @@
     "sessionKey": "0123456789-0123456789-0123456789",
     "sites": [
         {
-            "hostname": "dev1.local:8008",
+            "hostname": "dev1.local",
             "theme": "latenight.blue"
         },
         {
-            "hostname": "dev2.local:8008",
+            "hostname": "dev2.local",
             "theme": "eleventhirty.am"
         }
     ]
