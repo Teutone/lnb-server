@@ -420,7 +420,7 @@ func addTrack(db *ITrackDatabase) HandlerFuncType {
 		}
 
 		userIDI := session.Values["userID"]
-
+		var userID string
 		if userIDI != nil {
 			userID, ok := userIDI.(string)
 			if !ok {
