@@ -284,7 +284,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 
 	user := UserDatabase.getUserByName(requestData.Name)
 	if user != nil {
-		if !user.inHost(c.Request.Host) {
+		if !user.inHost(r.Host) {
 			http.Error(w, "Invalid login data", http.StatusForbidden)
 			return
 		}
@@ -456,7 +456,8 @@ func updateTrack(db *ITrackDatabase) HandlerFuncType {
 			http.Error(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
 		}
 		defer r.Body.Close()
-		trackID := c.Param("trackID")
+		params := mux.Vars(r)
+		trackID := params["trackID"]
 
 		if len(requestData.Artist) == 0 {
 			http.Error(w, "Invalid artist", http.StatusBadRequest)
@@ -502,19 +503,20 @@ func updateTrack(db *ITrackDatabase) HandlerFuncType {
 			json.NewEncoder(w).Encode(*track)
 		} else {
 			http.Error(w, "Track not found", http.StatusNotFound)
-			c.Abort()
 		}
 	}
 }
 
 func publishTrack(db *ITrackDatabase) HandlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
-		trackID := c.Param("trackID")
+		params := mux.Vars(r)
+		trackID := params["trackID"]
 		track := db.getTrackById(trackID)
 
 		if track != nil {
 			if track.Episode != nil {
-				c.JSON(400, errorResponse{"Track already published at episode " + strconv.FormatInt(int64(*track.Episode), 10)})
+				epString := strconv.FormatInt(int64(*track.Episode), 10)
+				http.Error(w, "Track already published at episode "+epString, http.StatusForbidden)
 				return
 			}
 
@@ -524,14 +526,14 @@ func publishTrack(db *ITrackDatabase) HandlerFuncType {
 			json.NewEncoder(w).Encode(track)
 		} else {
 			http.Error(w, "Track not found", http.StatusNotFound)
-			c.Abort()
 		}
 	}
 }
 
 func claimTrack(db *ITrackDatabase) HandlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
-		trackID := c.Param("trackID")
+		params := mux.Vars(r)
+		trackID := params["trackID"]
 		track := db.getTrackById(trackID)
 
 		if track != nil {
@@ -553,19 +555,18 @@ func claimTrack(db *ITrackDatabase) HandlerFuncType {
 			json.NewEncoder(w).Encode(track)
 		} else {
 			http.Error(w, "Track not found", http.StatusNotFound)
-			c.Abort()
 		}
 	}
 }
 
 func deleteTrack(db *ITrackDatabase) HandlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
-		trackID := c.Param("trackID")
+		params := mux.Vars(r)
+		trackID := params["trackID"]
 		track := db.getTrackById(trackID)
 
 		if track == nil {
 			http.Error(w, "Track not found", http.StatusNotFound)
-			c.Abort()
 		} else if track.Episode != nil {
 			http.Error(w, "Track already published", http.StatusForbidden)
 		} else {
@@ -590,7 +591,7 @@ func getUsers(w http.ResponseWriter, r *http.Request) {
 	if userRole == "admin" {
 		response := make([]authenticatedUserResponse, 0)
 		for _, user := range UserDatabase.Users {
-			if user.inHost(c.Request.Host) {
+			if user.inHost(r.Host) {
 				response = append(response, authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
 			}
 		}
@@ -598,7 +599,7 @@ func getUsers(w http.ResponseWriter, r *http.Request) {
 	} else {
 		response := make([]userResponse, 0)
 		for _, user := range UserDatabase.Users {
-			if user.inHost(c.Request.Host) {
+			if user.inHost(r.Host) {
 				response = append(response, userResponse{user.ID, user.Name})
 			}
 		}
@@ -645,7 +646,7 @@ func addUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(requestData.Hosts) == 0 {
-		requestData.Hosts = append(requestData.Hosts, c.Request.Host)
+		requestData.Hosts = append(requestData.Hosts, r.Host)
 	}
 
 	user := UserDatabase.getUserByName(requestData.Name)
@@ -682,7 +683,8 @@ func updateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
 	}
 	defer r.Body.Close()
-	userID := c.Param("userID")
+	params := mux.Vars(r)
+	userID := params["userID"]
 
 	if len(requestData.Name) == 0 {
 		http.Error(w, "Invalid name", http.StatusBadRequest)
@@ -706,6 +708,7 @@ func updateUser(w http.ResponseWriter, r *http.Request) {
 		user.Name = requestData.Name
 		user.Password = string(password)
 		UserDatabase.write()
+		json.NewEncoder(w).Encode(authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
 	} else {
 		http.Error(w, "User not found", http.StatusNotFound)
 	}
@@ -727,7 +730,9 @@ func updateUserPassword(w http.ResponseWriter, r *http.Request) {
 	userRole := session.Values["userRole"].(string)
 	userID := session.Values["userID"].(string)
 	currUserPassword := session.Values["userPassword"].([]byte)
-	userToUpdateId := c.Param("userID")
+
+	params := mux.Vars(r)
+	userToUpdateID := params["userID"]
 
 	// Get request body
 	var requestData passwordUpdateRequest
@@ -742,7 +747,7 @@ func updateUserPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if userRole == "admin" || userID == userToUpdateId {
+	if userRole == "admin" || userID == userToUpdateID {
 		if requestData.Password != requestData.PasswordRepeat {
 			http.Error(w, "Passwords do not match", http.StatusBadRequest)
 			return
@@ -754,10 +759,10 @@ func updateUserPassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		user := UserDatabase.getUserById(userID)
+		user := UserDatabase.getUserById(userToUpdateID)
 		user.Password = string(password)
 		UserDatabase.write()
-
+		json.NewEncoder(w).Encode(authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
 	} else {
 		http.Error(w, "Insufficient rights", http.StatusForbidden)
 	}
