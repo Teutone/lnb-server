@@ -1,10 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
+	"path"
 	"strconv"
-	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
@@ -61,9 +62,9 @@ func InitHostRouter(db *ITrackDatabase, r *mux.Router) {
 	// So we use the mw() func to put it in front of our actual handler
 	// the mw function returns a http.Handler, which is why we use api.Handle().
 
-	// The directly used funcs are of type func(http.ResponseWriter, http.Request)
-	// the executed functions are ones that require the track database for the current host,
-	// so they are wrapped in anotehr func that returns a func of the above type.
+	// The directly used funcs (e.g. logout) are of type func(http.ResponseWriter, http.Request)
+	// the executed funcs (e.g. addTrack(db)) are ones that require the track database for the current host,
+	// so they are wrapped in another func that returns a func of the above type.
 
 	// http.HandlerFunc is a convenience method to turn the above func type into a http.Handler
 
@@ -87,16 +88,15 @@ func InitHostRouter(db *ITrackDatabase, r *mux.Router) {
 		Methods("POST")
 	api.Handle("/users/:userID/password", mw(http.HandlerFunc(updateUserPassword), authMiddleware)).
 		Methods("POST")
-	/*
-		themeStaticDir := path.Join(Config.ThemeDir, db.Hostname)
-		r.Use(static.Serve("/", static.LocalFile(themeStaticDir, false)))
 
-		// Fallback route, just sends the frontend index.html
-		r.NoRoute(func(c *gin.Context) {
-			c.File(path.Join(themeStaticDir, "index.html"))
-		})
+	/* Static files */
+	themeStaticDir := path.Join(Config.ThemeDir, db.Hostname)
+	r.PathPrefix("/").Handler(http.FileServer(http.Dir(themeStaticDir)))
 
-		return r */
+	/* The 404 handler just returns the index.html */
+	r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, path.Join(themeStaticDir, "index.html"))
+	})
 }
 
 /* Utility
@@ -155,21 +155,25 @@ type installRequest struct {
 func install(w http.ResponseWriter, r *http.Request) {
 	if len(UserDatabase.Users) == 0 {
 		var requestData installRequest
-		c.BindJSON(&requestData)
+		decoder := json.NewDecoder(r.Body)
+		if decoder.Decode(&requestData) != nil {
+			http.Error(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+		}
+		defer r.Body.Close()
 
 		if len(requestData.Name) == 0 {
-			c.JSON(400, errorResponse{"Invalid name"})
+			http.Error(w, "Invalid name", http.StatusBadRequest)
 			return
 		}
 
 		if len(requestData.Password) < 12 {
-			c.JSON(400, errorResponse{"Invalid Password. Minimum length is 12"})
+			http.Error(w, "Invalid Password. Minimum length is 12", http.StatusBadRequest)
 			return
 		}
 
 		password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
 		if err != nil {
-			c.JSON(500, errorResponse{"Something went wrong"})
+			http.Error(w, "Something went wrong", http.StatusInternalServerError)
 			return
 		}
 
@@ -193,16 +197,16 @@ func install(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		session.Set("userName", user.Name)
-		session.Set("userID", user.ID)
-		session.Set("userRole", user.Role)
-		session.Set("userHosts", user.Hosts)
-		session.Set("userPassword", user.Password)
-		session.Save()
+		session.Values["userName"] = user.Name
+		session.Values["userID"] = user.ID
+		session.Values["userRole"] = user.Role
+		session.Values["userHosts"] = user.Hosts
+		session.Values["userPassword"] = user.Password
+		session.Save(r, w)
 
-		c.JSON(200, authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
+		json.NewEncoder(w).Encode(authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
 	} else {
-		c.JSON(403, errorResponse{"Already set up"})
+		http.Error(w, "Already set up", http.StatusForbidden)
 	}
 }
 
@@ -253,7 +257,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 		userHosts := userHostsI.([]string)
 
 		if ok && len(userID) > 0 {
-			c.JSON(200, authenticatedUserResponse{userID, userName, userRole, userHosts})
+			json.NewEncoder(w).Encode(authenticatedUserResponse{userID, userName, userRole, userHosts})
 			return
 		}
 	}
@@ -264,35 +268,40 @@ func login(w http.ResponseWriter, r *http.Request) {
 			if rToken.Token == token {
 				user := UserDatabase.getUserById(rToken.userID)
 				if user != nil {
-					c.JSON(200, authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
+					json.NewEncoder(w).Encode(authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
 				}
 			}
 		}
 	}
 
+	// Get request body
 	var requestData loginRequest
-	c.BindJSON(&requestData)
+	decoder := json.NewDecoder(r.Body)
+	if decoder.Decode(&requestData) != nil {
+		http.Error(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+	}
+	defer r.Body.Close()
 
 	user := UserDatabase.getUserByName(requestData.Name)
 	if user != nil {
 		if !user.inHost(c.Request.Host) {
-			c.JSON(403, errorResponse{"Invalid login data"})
+			http.Error(w, "Invalid login data", http.StatusForbidden)
 			return
 		}
 
 		err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(requestData.Password))
 		if err == nil {
-			session.Set("userName", user.Name)
-			session.Set("userID", user.ID)
-			session.Set("userRole", user.Role)
-			session.Set("userHosts", user.Hosts)
-			session.Set("userPassword", user.Password)
-			session.Save()
+			session.Values["userName"] = user.Name
+			session.Values["userID"] = user.ID
+			session.Values["userRole"] = user.Role
+			session.Values["userHosts"] = user.Hosts
+			session.Values["userPassword"] = user.Password
+			session.Save(r, w)
 
-			if requestData.Remember {
+			/* if requestData.Remember {
 				token, err := GenerateRandomString(32)
 				if err != nil {
-					c.JSON(500, errorResponse{"Something went wrong"})
+					http.Error(w, "Something went wrong", http.StatusInternalServerError)
 					return
 				}
 
@@ -309,14 +318,14 @@ func login(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 				}
-			}
+			} */
 
-			c.JSON(200, authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
+			json.NewEncoder(w).Encode(authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
 			return
 		}
 	}
 
-	c.JSON(403, errorResponse{"Invalid login data"})
+	http.Error(w, "Invalid login data", http.StatusForbidden)
 }
 
 func logout(w http.ResponseWriter, r *http.Request) {
@@ -327,8 +336,8 @@ func logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	session.Clear()
-	session.Save()
-	c.JSON(200, struct{}{})
+	session.Save(r, w)
+	json.NewEncoder(w).Encode(struct{}{})
 }
 
 /* Track CRUD
@@ -359,37 +368,43 @@ func getTracks(db *ITrackDatabase) HandlerFuncType {
 				return
 			}
 		}
-		// send hafl the data
+		// send half the data
 	}
 }
 
 func addTrack(db *ITrackDatabase) HandlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
+
+		// Get request body
 		var requestData trackRequest
-		c.BindJSON(&requestData)
+		decoder := json.NewDecoder(r.Body)
+		if decoder.Decode(&requestData) != nil {
+			http.Error(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+		}
+		defer r.Body.Close()
 
 		if len(requestData.Artist) == 0 {
-			c.JSON(400, errorResponse{"Invalid artist"})
+			http.Error(w, "Invalid artist", http.StatusBadRequest)
 			return
 		}
 
 		if len(requestData.Title) == 0 {
-			c.JSON(400, errorResponse{"Invalid title"})
+			http.Error(w, "Invalid title", http.StatusBadRequest)
 			return
 		}
 
 		if len(requestData.Release) == 0 {
-			c.JSON(400, errorResponse{"Invalid release"})
+			http.Error(w, "Invalid release", http.StatusBadRequest)
 			return
 		}
 
 		if len(requestData.URL) == 0 {
-			c.JSON(400, errorResponse{"Invalid URL"})
+			http.Error(w, "Invalid URL", http.StatusBadRequest)
 			return
 		}
 
 		if requestData.End == 0 {
-			c.JSON(400, errorResponse{"End cannot be zero"})
+			http.Error(w, "End cannot be zero", http.StatusBadRequest)
 			return
 		}
 
@@ -427,38 +442,43 @@ func addTrack(db *ITrackDatabase) HandlerFuncType {
 		}
 		db.addTrack(track)
 
-		c.JSON(200, track)
+		json.NewEncoder(w).Encode(track)
 	}
 }
 
 func updateTrack(db *ITrackDatabase) HandlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Get request body
 		var requestData trackRequest
-		c.BindJSON(&requestData)
+		decoder := json.NewDecoder(r.Body)
+		if decoder.Decode(&requestData) != nil {
+			http.Error(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+		}
+		defer r.Body.Close()
 		trackID := c.Param("trackID")
 
 		if len(requestData.Artist) == 0 {
-			c.JSON(400, errorResponse{"Invalid artist"})
+			http.Error(w, "Invalid artist", http.StatusBadRequest)
 			return
 		}
 
 		if len(requestData.Title) == 0 {
-			c.JSON(400, errorResponse{"Invalid title"})
+			http.Error(w, "Invalid title", http.StatusBadRequest)
 			return
 		}
 
 		if len(requestData.Release) == 0 {
-			c.JSON(400, errorResponse{"Invalid release"})
+			http.Error(w, "Invalid release", http.StatusBadRequest)
 			return
 		}
 
 		if len(requestData.URL) == 0 {
-			c.JSON(400, errorResponse{"Invalid URL"})
+			http.Error(w, "Invalid URL", http.StatusBadRequest)
 			return
 		}
 
 		if requestData.End == 0 {
-			c.JSON(400, errorResponse{"End cannot be zero"})
+			http.Error(w, "End cannot be zero", http.StatusBadRequest)
 			return
 		}
 
@@ -478,9 +498,9 @@ func updateTrack(db *ITrackDatabase) HandlerFuncType {
 			track.Meta = requestData.Meta
 			db.write()
 
-			c.JSON(200, *track)
+			json.NewEncoder(w).Encode(*track)
 		} else {
-			c.JSON(404, errorResponse{"Track not found"})
+			http.Error(w, "Track not found", http.StatusNotFound)
 			c.Abort()
 		}
 	}
@@ -500,9 +520,9 @@ func publishTrack(db *ITrackDatabase) HandlerFuncType {
 			latestEpisode := db.getNewEpisodeNumber()
 			track.Episode = &latestEpisode
 			db.write()
-			c.JSON(200, track)
+			json.NewEncoder(w).Encode(track)
 		} else {
-			c.JSON(404, errorResponse{"Track not found"})
+			http.Error(w, "Track not found", http.StatusNotFound)
 			c.Abort()
 		}
 	}
@@ -515,7 +535,7 @@ func claimTrack(db *ITrackDatabase) HandlerFuncType {
 
 		if track != nil {
 			if len(track.Uploader) != 0 {
-				c.JSON(400, errorResponse{"Track already claimed"})
+				http.Error(w, "Track already claimed", http.StatusBadRequest)
 				return
 			}
 
@@ -529,9 +549,9 @@ func claimTrack(db *ITrackDatabase) HandlerFuncType {
 			userIDstring := userID.(string)
 			track.Uploader = userIDstring
 			db.write()
-			c.JSON(200, track)
+			json.NewEncoder(w).Encode(track)
 		} else {
-			c.JSON(404, errorResponse{"Track not found"})
+			http.Error(w, "Track not found", http.StatusNotFound)
 			c.Abort()
 		}
 	}
@@ -543,13 +563,13 @@ func deleteTrack(db *ITrackDatabase) HandlerFuncType {
 		track := db.getTrackById(trackID)
 
 		if track == nil {
-			c.JSON(404, errorResponse{"Track not found"})
+			http.Error(w, "Track not found", http.StatusNotFound)
 			c.Abort()
 		} else if track.Episode != nil {
-			c.JSON(403, errorResponse{"Track already published"})
+			http.Error(w, "Track already published", http.StatusForbidden)
 		} else {
 			deletedTrack := db.deleteTrack(trackID)
-			c.JSON(200, *deletedTrack)
+			json.NewEncoder(w).Encode(*deletedTrack)
 		}
 	}
 }
@@ -573,7 +593,7 @@ func getUsers(w http.ResponseWriter, r *http.Request) {
 				response = append(response, authenticatedUserResponse{user.ID, user.Name, user.Role, user.Hosts})
 			}
 		}
-		c.JSON(200, response)
+		json.NewEncoder(w).Encode(response)
 	} else {
 		response := make([]userResponse, 0)
 		for _, user := range UserDatabase.Users {
@@ -581,7 +601,7 @@ func getUsers(w http.ResponseWriter, r *http.Request) {
 				response = append(response, userResponse{user.ID, user.Name})
 			}
 		}
-		c.JSON(200, response)
+		json.NewEncoder(w).Encode(response)
 	}
 }
 
@@ -595,25 +615,31 @@ func addUser(w http.ResponseWriter, r *http.Request) {
 	userRole := session.Values["userRole"]
 
 	if userRole != "admin" {
-		c.JSON(403, errorResponse{"Insufficient rights"})
+		http.Error(w, "Insufficient rights", http.StatusForbidden)
 		return
 	}
 
+	// Get request body
 	var requestData userRequest
-	c.BindJSON(&requestData)
+	decoder := json.NewDecoder(r.Body)
+	if decoder.Decode(&requestData) != nil {
+		http.Error(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
 
 	if len(requestData.Name) == 0 {
-		c.JSON(400, errorResponse{"Invalid name"})
+		http.Error(w, "Invalid name", http.StatusBadRequest)
 		return
 	}
 
 	if len(requestData.Password) < 12 {
-		c.JSON(400, errorResponse{"Invalid Password. Minimum length is 12"})
+		http.Error(w, "Invalid Password. Minimum length is 12", http.StatusBadRequest)
 		return
 	}
 
 	if len(requestData.Role) == 0 || (requestData.Role != "submitter" && requestData.Role != "admin") {
-		c.JSON(400, errorResponse{"Invalid Role. Provide either 'admin' or 'submitter'"})
+		http.Error(w, "Invalid Role. Provide either 'admin' or 'submitter'", http.StatusBadRequest)
 		return
 	}
 
@@ -624,13 +650,13 @@ func addUser(w http.ResponseWriter, r *http.Request) {
 	user := UserDatabase.getUserByName(requestData.Name)
 
 	if len(user.Name) > 0 {
-		c.JSON(400, errorResponse{"User already exists"})
+		http.Error(w, "User already exists", http.StatusBadRequest)
 		return
 	}
 
 	password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
 	if err != nil {
-		c.JSON(500, errorResponse{"Something went wrong"})
+		http.Error(w, "Something went wrong", http.StatusInternalServerError)
 		return
 	}
 
@@ -644,21 +670,26 @@ func addUser(w http.ResponseWriter, r *http.Request) {
 	}
 	UserDatabase.addUser(newUser)
 
-	c.JSON(200, userResponse{newUser.ID, newUser.Name})
+	json.NewEncoder(w).Encode(userResponse{newUser.ID, newUser.Name})
 }
 
 func updateUser(w http.ResponseWriter, r *http.Request) {
+	// Get request body
 	var requestData userRequest
-	c.BindJSON(&requestData)
+	decoder := json.NewDecoder(r.Body)
+	if decoder.Decode(&requestData) != nil {
+		http.Error(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+	}
+	defer r.Body.Close()
 	userID := c.Param("userID")
 
 	if len(requestData.Name) == 0 {
-		c.JSON(400, errorResponse{"Invalid name"})
+		http.Error(w, "Invalid name", http.StatusBadRequest)
 		return
 	}
 
 	if len(requestData.Password) < 12 {
-		c.JSON(400, errorResponse{"Invalid Password. Minimum length is 12"})
+		http.Error(w, "Invalid Password. Minimum length is 12", http.StatusBadRequest)
 		return
 	}
 
@@ -667,7 +698,7 @@ func updateUser(w http.ResponseWriter, r *http.Request) {
 	if len(user.Name) > 0 {
 		password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
 		if err != nil {
-			c.JSON(500, errorResponse{"Something went wrong"})
+			http.Error(w, "Something went wrong", http.StatusInternalServerError)
 			return
 		}
 
@@ -675,7 +706,7 @@ func updateUser(w http.ResponseWriter, r *http.Request) {
 		user.Password = string(password)
 		UserDatabase.write()
 	} else {
-		c.JSON(404, errorResponse{"User not found"})
+		http.Error(w, "User not found", http.StatusNotFound)
 	}
 }
 
@@ -696,24 +727,29 @@ func updateUserPassword(w http.ResponseWriter, r *http.Request) {
 	userID := session.Values["userID"].(string)
 	currUserPassword := session.Values["userPassword"].([]byte)
 	userToUpdateId := c.Param("userID")
-	var requestData passwordUpdateRequest
-	c.BindJSON(&requestData)
 
-	err := bcrypt.CompareHashAndPassword(currUserPassword, []byte(requestData.CurrentUserPassword))
-	if err != nil {
-		c.JSON(403, errorResponse{"Incorrect current password"})
+	// Get request body
+	var requestData passwordUpdateRequest
+	decoder := json.NewDecoder(r.Body)
+	if decoder.Decode(&requestData) != nil {
+		http.Error(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+	}
+	defer r.Body.Close()
+
+	if bcrypt.CompareHashAndPassword(currUserPassword, []byte(requestData.CurrentUserPassword)) != nil {
+		http.Error(w, "Incorrect current password", http.StatusForbidden)
 		return
 	}
 
 	if userRole == "admin" || userID == userToUpdateId {
 		if requestData.Password != requestData.PasswordRepeat {
-			c.JSON(400, errorResponse{"Passwords do not match"})
+			http.Error(w, "Passwords do not match", http.StatusBadRequest)
 			return
 		}
 
 		password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
 		if err != nil {
-			c.JSON(500, errorResponse{"Something went wrong"})
+			http.Error(w, "Something went wrong", http.StatusInternalServerError)
 			return
 		}
 
@@ -722,6 +758,6 @@ func updateUserPassword(w http.ResponseWriter, r *http.Request) {
 		UserDatabase.write()
 
 	} else {
-		c.JSON(403, errorResponse{"Insufficient rights"})
+		http.Error(w, "Insufficient rights", http.StatusForbidden)
 	}
 }
