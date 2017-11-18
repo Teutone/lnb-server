@@ -9,16 +9,17 @@ import (
 )
 
 type ITrack struct {
-	ID       string `json:"id"`
-	Episode  *int   `json:"episode"`
-	Artist   string `json:"artist"`
-	Title    string `json:"title"`
-	Release  string `json:"release"`
-	Start    int    `json:"start"`
-	End      int    `json:"end"`
-	URL      string `json:"url"`
-	Uploader string `json:"uploader"`
-	Meta     string `json:"meta"`
+	ID              string `json:"id"`
+	Episode         *int   `json:"episode"`
+	Artist          string `json:"artist"`
+	Title           string `json:"title"`
+	Release         string `json:"release"`
+	Start           int    `json:"start"`
+	End             int    `json:"end"`
+	URL             string `json:"url"`
+	Uploader        string `json:"uploader"`
+	Meta            string `json:"meta"`
+	LastChangeStamp int64  `json:"lastChangeStamp"`
 }
 
 type ITrackDatabase struct {

@@ -11,6 +11,7 @@ import (
 type IUser struct {
 	ID       string   `json:"id"`
 	Name     string   `json:"name"`
+	Bio      string   `json:"bio"`
 	Password string   `json:"password"`
 	Role     string   `json:"role"`
 	Hosts    []string `json:"hosts"`
