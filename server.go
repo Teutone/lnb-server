@@ -152,6 +152,7 @@ func install(w http.ResponseWriter, r *http.Request) {
 		decoder := json.NewDecoder(r.Body)
 		if decoder.Decode(&requestData) != nil {
 			throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+			return
 		}
 		defer r.Body.Close()
 
@@ -263,6 +264,7 @@ func login(host string) HandlerFuncType {
 		decoder := json.NewDecoder(r.Body)
 		if decoder.Decode(&requestData) != nil {
 			throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+			return
 		}
 		defer r.Body.Close()
 
@@ -334,7 +336,7 @@ type trackRequest struct {
 	Artist  string `json:"artist"`
 	Title   string `json:"title"`
 	Release string `json:"release"`
-	URL     string `json:"URL"`
+	URL     string `json:"url"`
 	Start   int    `json:"start"`
 	End     int    `json:"end"`
 	Meta    string `json:"meta"`
@@ -379,7 +381,8 @@ func addTrack(db *ITrackDatabase) HandlerFuncType {
 		var requestData trackRequest
 		decoder := json.NewDecoder(r.Body)
 		if decoder.Decode(&requestData) != nil {
-			throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+			throwError(w, fmt.Sprintf("Sent JSON body does is not of correct type"), http.StatusBadRequest)
+			return
 		}
 		defer r.Body.Close()
 
@@ -455,6 +458,7 @@ func updateTrack(db *ITrackDatabase) HandlerFuncType {
 		decoder := json.NewDecoder(r.Body)
 		if decoder.Decode(&requestData) != nil {
 			throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+			return
 		}
 		defer r.Body.Close()
 		params := mux.Vars(r)
