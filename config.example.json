@@ -1,4 +1,6 @@
 {
+    "env": "dev",
+    "devCookieDomain": "127.0.0.1",
     "letsEncryptEnabled": false,
     "letsEncryptEmail": "hello@benjaminbaedorf.eu",
     "port": 8008,

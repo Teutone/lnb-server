@@ -13,6 +13,8 @@ type SiteConfig struct {
 }
 
 type ServerConfig struct {
+	Env                string `json:"env"`
+	DevCookieDomain    string `json:"devCookieDomain"`
 	LetsEncryptEnabled bool   `json:"letsEncryptEnabled"`
 	LetsEncryptEmail   string `json:"letsEncryptEmail"`
 	Port               int    `json:"port"`
@@ -35,4 +37,8 @@ func InitConfig(file string) {
 		}
 	}
 	json.Unmarshal(configFile, &Config)
+
+	if Config.Env != "dev" && Config.Env != "prod" {
+		log.Fatal("Please set the config \"env\" key to either \"dev\" or \"prod\"")
+	}
 }

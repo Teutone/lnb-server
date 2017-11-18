@@ -38,9 +38,11 @@ func InitHostRouter(db *ITrackDatabase, r *mux.Router) {
 	// Unauthenticated API routes
 	api.HandleFunc("/login", login(db.Hostname)).
 		Methods("POST")
-	api.HandleFunc("/tracks", getTracks(db)).
+	api.HandleFunc("/logout", logout).
+		Methods("POST")
+	api.HandleFunc("/tracks/", getTracks(db)).
 		Methods("GET")
-	api.HandleFunc("/users", getUsers(db.Hostname)).
+	api.HandleFunc("/users/", getUsers(db.Hostname)).
 		Methods("GET")
 
 	// First time install route, only works when there are no users in the DB yet
@@ -60,10 +62,7 @@ func InitHostRouter(db *ITrackDatabase, r *mux.Router) {
 
 	// http.HandlerFunc is a convenience method to turn the above func type into a http.Handler
 
-	api.Handle("/logout", mw(http.HandlerFunc(logout), authMiddleware)).
-		Methods("POST")
-
-	api.Handle("/tracks", mw(http.HandlerFunc(addTrack(db)), authMiddleware)).
+	api.Handle("/tracks/", mw(http.HandlerFunc(addTrack(db)), authMiddleware)).
 		Methods("POST")
 	api.Handle("/tracks/:trackID", mw(http.HandlerFunc(updateTrack(db)), authMiddleware)).
 		Methods("POST")
@@ -74,7 +73,7 @@ func InitHostRouter(db *ITrackDatabase, r *mux.Router) {
 	api.Handle("/tracks/:trackID", mw(http.HandlerFunc(deleteTrack(db)), authMiddleware)).
 		Methods("DELETE")
 
-	api.Handle("/users", mw(http.HandlerFunc(addUser(db.Hostname)), authMiddleware)).
+	api.Handle("/users/", mw(http.HandlerFunc(addUser(db.Hostname)), authMiddleware)).
 		Methods("POST")
 	api.Handle("/users/:userID", mw(http.HandlerFunc(updateUser), authMiddleware)).
 		Methods("POST")
@@ -113,7 +112,6 @@ func throwError(w http.ResponseWriter, message string, code int) {
 // Content-Type json
 func setContentTypeMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Println("setting content type json for api")
 		w.Header().Set("Content-Type", "application/json")
 		h.ServeHTTP(w, r)
 	})
@@ -122,8 +120,6 @@ func setContentTypeMiddleware(h http.Handler) http.Handler {
 // Authentication
 func authMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Println("checking auth")
-
 		session, err := store.Get(r, DefaultSession)
 		if err != nil {
 			throwError(w, err.Error(), http.StatusInternalServerError)
@@ -279,7 +275,6 @@ func login(host string) HandlerFuncType {
 
 			err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(requestData.Password))
 			if err == nil {
-				oneHour := 60 * 60
 				session.Values["userName"] = user.Name
 				session.Values["userID"] = user.ID
 				session.Values["userRole"] = user.Role
@@ -287,10 +282,17 @@ func login(host string) HandlerFuncType {
 				session.Values["userPassword"] = user.Password
 				session.Options = &sessions.Options{
 					Path:     "/",
-					Domain:   host,
-					MaxAge:   oneHour,
-					Secure:   true,
-					HttpOnly: true,
+					Secure:   false,
+					HttpOnly: false,
+				}
+
+				if Config.Env == "prod" {
+					session.Options.Domain = host
+					session.Options.Secure = true
+				}
+
+				if Config.Env == "dev" && len(Config.DevCookieDomain) > 0 {
+					session.Options.Domain = Config.DevCookieDomain
 				}
 
 				if requestData.Remember {
@@ -315,6 +317,10 @@ func logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	session.Values["userID"] = nil
+	session.Values["userName"] = nil
+	session.Values["userRole"] = nil
+	session.Values["userHosts"] = nil
 	session.Options.MaxAge = -1
 	session.Save(r, w)
 	json.NewEncoder(w).Encode(struct{}{})
