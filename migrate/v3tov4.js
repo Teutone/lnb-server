@@ -12,6 +12,7 @@ const output = input.songs.map(({ title, artist, album, episode, id, url }) => (
     release: album,
     episode,
     id,
-    url
+    url,
+    meta: '{}'
 }))
 fs.writeFileSync(path.join(process.cwd(), outputLocation), JSON.stringify(output, null, 4), 'utf8');
