@@ -21,6 +21,8 @@ type ServerConfig struct {
 	DataDir            string `json:"dataDir"`
 	ThemeDir           string `json:"themeDir"`
 	SessionKey         string `json:"sessionKey"`
+	FbAppId            string `json:"fbAppId`
+	FbAppSecret        string `json:"fbAppSecret`
 	Sites              []SiteConfig
 }
 

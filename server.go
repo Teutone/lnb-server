@@ -80,6 +80,13 @@ func InitHostRouter(db *ITrackDatabase, r *mux.Router) {
 	api.Handle("/users/{userID}", mw(http.HandlerFunc(updateUser), authMiddleware)).
 		Methods("POST")
 
+	api.Handle("/fb/connect-start", mw(http.HandlerFunc(updateUser), authMiddleware)).
+		Methods("GET")
+	api.Handle("/fb/connect-finish", mw(http.HandlerFunc(updateUser), authMiddleware)).
+		Methods("GET")
+	api.Handle("/fb/disconnect", mw(http.HandlerFunc(updateUser), authMiddleware)).
+		Methods("GET")
+
 	/* Static files */
 	themeStaticDir := path.Join(Config.ThemeDir, db.Hostname)
 	log.Printf("serving static on /static/ from %s", themeStaticDir)
