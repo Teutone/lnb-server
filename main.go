@@ -20,9 +20,10 @@ func main() {
 		log.Fatal("Please specify the config file location as the first cli argument")
 	}
 
-	InitConfig(configFile)
-	InitUserDatabase()
+	initConfig(configFile)
+	initUserDatabase()
 	initFb()
+	initCookieStore()
 
 	router := mux.NewRouter()
 

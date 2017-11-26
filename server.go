@@ -15,6 +15,11 @@ import (
 // The cookie store
 var store *sessions.CookieStore
 
+func initCookieStore() {
+	// Sessions
+	store = sessions.NewCookieStore([]byte(Config.SessionKey))
+}
+
 const (
 	DefaultSession        = "lnb-session"
 	DefaultSessionVersion = 1
@@ -26,9 +31,6 @@ type handlerFuncType func(w http.ResponseWriter, r *http.Request)
 // The router initializissociated with the host as only argument
 func initHostRouter(db *ITrackDatabase, hc *fbHostConfig, r *mux.Router) {
 	log.Print("initializing router for host " + db.Hostname)
-
-	// Sessions
-	store = sessions.NewCookieStore([]byte(Config.SessionKey))
 
 	// Api set-up and routes
 	api := mux.NewRouter()
@@ -42,6 +44,8 @@ func initHostRouter(db *ITrackDatabase, hc *fbHostConfig, r *mux.Router) {
 	api.HandleFunc("/tracks/", getTracks(db)).
 		Methods("GET")
 	api.HandleFunc("/users/", getUsers(db.Hostname)).
+		Methods("GET")
+	api.Handle("/config", http.HandlerFunc(getConfig(db.Hostname))).
 		Methods("GET")
 
 	// First time install route, only works when there are no users in the DB yet
@@ -77,8 +81,6 @@ func initHostRouter(db *ITrackDatabase, hc *fbHostConfig, r *mux.Router) {
 	api.Handle("/users/{userID}", mw(http.HandlerFunc(updateUser), authMiddleware)).
 		Methods("POST")
 
-	api.Handle("/config", mw(http.HandlerFunc(getConfig(db.Hostname)), authMiddleware)).
-		Methods("GET")
 	api.Handle("/config", mw(http.HandlerFunc(setConfig(db.Hostname)), adminMiddleware)).
 		Methods("POST")
 
@@ -189,10 +191,21 @@ func indexFallback(db *ITrackDatabase, hc *fbHostConfig, file string) handlerFun
 			return
 		}
 
+		protocol := "http"
+		if Config.LetsEncryptEnabled {
+			protocol = "https"
+		}
 		data := struct {
 			Title       string
 			Description string
-		}{"", ""}
+			URL         string
+			Host        string
+		}{
+			"",
+			"",
+			protocol + "://" + hc.host + "/",
+			hc.host,
+		}
 
 		var seoConfig SeoConfig
 		for _, vConfig := range Config.Sites {

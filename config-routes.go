@@ -37,6 +37,9 @@ func setConfig(host string) handlerFuncType {
 		for index := range Config.Sites {
 			vConfig := &Config.Sites[index]
 			if vConfig.Hostname == host {
+				vConfig.SeoConfig.DefaultSocialMessage = requestData.DefaultSocialMessage
+				vConfig.SeoConfig.InformationText = requestData.InformationText
+				vConfig.SeoConfig.Description = requestData.Description
 				vConfig.SeoConfig.Description = requestData.Description
 				vConfig.SeoConfig.Title = requestData.Title
 				writeConfig()

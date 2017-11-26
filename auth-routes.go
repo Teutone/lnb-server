@@ -96,15 +96,16 @@ func login(host string) handlerFuncType {
 					Path:     "/",
 					Secure:   false,
 					HttpOnly: false,
+					MaxAge:   60 * 60,
 				}
 
 				if Config.Env == "prod" {
-					session.Options.Domain = host + "." // dot added to trick chrome into accepting single dot domains
+					// session.Options.Domain = host
 					session.Options.Secure = true
 				}
 
 				if Config.Env == "dev" && len(Config.DevCookieDomain) > 0 {
-					session.Options.Domain = Config.DevCookieDomain + "." // dot added to trick chrome into accepting single dot domains
+					session.Options.Domain = Config.DevCookieDomain
 				}
 
 				if requestData.Remember {
@@ -112,7 +113,11 @@ func login(host string) handlerFuncType {
 					session.Options.MaxAge = oneYear
 				}
 
-				session.Save(r, w)
+				err = session.Save(r, w)
+				if err != nil {
+					throwError(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
 				json.NewEncoder(w).Encode(authenticatedUserResponse{user.ID, user.Name, user.Bio, user.Role, user.Hosts})
 				return
 			}
@@ -134,6 +139,10 @@ func logout(w http.ResponseWriter, r *http.Request) {
 	session.Values["userRole"] = nil
 	session.Values["userHosts"] = nil
 	session.Options.MaxAge = -1
-	session.Save(r, w)
+	err = session.Save(r, w)
+	if err != nil {
+		throwError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	json.NewEncoder(w).Encode(struct{}{})
 }

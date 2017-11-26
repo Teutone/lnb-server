@@ -10,6 +10,7 @@ import (
 )
 
 type SeoConfig struct {
+	InformationText      string `json:"informationText"`
 	DefaultSocialMessage string `json:"defaultSocialMessage"`
 	Description          struct {
 		Episode string `json:"episode"`
@@ -45,7 +46,7 @@ type ServerConfig struct {
 var Config ServerConfig
 var configLocation string
 
-func InitConfig(file string) {
+func initConfig(file string) {
 	configLocation = file
 
 	log.Print("reading config from " + file)

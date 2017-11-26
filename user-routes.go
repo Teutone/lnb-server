@@ -128,15 +128,15 @@ func updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(requestData.Password) < 12 {
-		throwError(w, "Invalid Password. Minimum length is 12", http.StatusBadRequest)
-		return
-	}
-
 	user := UserDatabase.getUserById(userID)
 
 	if len(user.Name) > 0 {
 		if len(requestData.Password) > 0 {
+			if len(requestData.Password) < 12 {
+				throwError(w, "Invalid Password. Minimum length is 12", http.StatusBadRequest)
+				return
+			}
+
 			password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
 			if err != nil {
 				throwError(w, "Something went wrong", http.StatusInternalServerError)

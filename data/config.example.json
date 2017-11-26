@@ -21,6 +21,7 @@
                 "pageAccessToken": ""
             },
             "seo": {
+                "informationText": "ayy",
                 "defaultSocialMessage": "Episode $$EPISODE features $$TITLE by $$ARTIST.",
                 "description": {
                     "episode": "Ep. $$EPISODE: $$TITLE by $$ARTIST - latenight.blue- Handpicked minimal Music",
@@ -43,6 +44,7 @@
                 "pageAccessToken": ""
             },
             "seo": {
+                "informationText": "ayy",
                 "defaultSocialMessage": "Episode $$EPISODE features $$TITLE by $$ARTIST.",
                 "description": {
                     "episode": "Ep. $$EPISODE: $$TITLE by $$ARTIST - 11:30am - Handpicked eclectic Music",

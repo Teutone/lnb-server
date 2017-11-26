@@ -34,7 +34,7 @@ type IUserDatabase struct {
 
 var UserDatabase IUserDatabase
 
-func InitUserDatabase() {
+func initUserDatabase() {
 	log.Print("initializing user database")
 
 	if Config.DataDir == "" {
