@@ -78,7 +78,7 @@ func InitUserDatabase() {
 func (db *IUserDatabase) write() {
 	log.Print("writing user database file")
 
-	dbString, err := json.Marshal(&db.Users)
+	dbString, err := json.MarshalIndent(&db.Users, "", "    ")
 	if err != nil {
 		log.Fatal(err)
 	}

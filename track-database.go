@@ -82,7 +82,7 @@ func initTrackDatabase(hostname string) *ITrackDatabase {
 func (db *ITrackDatabase) write() {
 	log.Printf("writing track database file for host %s", db.Hostname)
 
-	dbString, err := json.Marshal(&db.Tracks)
+	dbString, err := json.MarshalIndent(&db.Tracks, "", "    ")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -115,7 +115,6 @@ func (db *ITrackDatabase) getNewEpisodeNumber() int {
 		track := &db.Tracks[i]
 		if track.Episode != nil && *track.Episode > latestEpisode {
 			latestEpisode = *track.Episode
-			break
 		}
 	}
 	latestEpisode = latestEpisode + 1

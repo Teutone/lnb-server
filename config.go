@@ -7,10 +7,22 @@ import (
 	"os"
 )
 
+type SeoConfig struct {
+	Description struct {
+		Episode string `json:"episode"`
+		Default string `json:"default"`
+	} `json:"description"`
+	Title struct {
+		Episode string `json:"episode"`
+		Default string `json:"default"`
+	} `json:"title"`
+}
+
 type SiteConfig struct {
-	Hostname string   `json:"hostname"`
-	Theme    string   `json:"theme"`
-	FbConfig fbAccess `json:"fbConfig"`
+	Hostname  string    `json:"hostname"`
+	Theme     string    `json:"theme"`
+	FbConfig  fbAccess  `json:"fbConfig"`
+	SeoConfig SeoConfig `json:"seo"`
 }
 
 type ServerConfig struct {

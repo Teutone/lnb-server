@@ -104,9 +104,20 @@ func (hc *fbHostConfig) initUserSession() error {
 
 func (hc *fbHostConfig) setUserAccessToken(userAccessToken string, userID string) error {
 	hc.clear()
-	hc.access.UserAccessToken = userAccessToken
 	hc.access.LocalUserID = userID
-	err := hc.initUserSession()
+	res, err := fb.Get("/oauth/access_token", fb.Params{
+		"grant_type":        "fb_exchange_token",
+		"client_id":         Config.FbAppID,
+		"client_secret":     Config.FbAppSecret,
+		"fb_exchange_token": userAccessToken,
+	})
+	if err != nil {
+		log.Printf("An error occurred during token exchange: %v", err)
+		return err
+	}
+
+	hc.access.UserAccessToken = res.Get("access_token").(string)
+	err = hc.initUserSession()
 	writeConfig()
 	return err
 }
@@ -126,6 +137,7 @@ type facebookPage struct {
 func (hc *fbHostConfig) getPages() ([]facebookPage, error) {
 	res, err := hc.userSession.Get("/me/accounts", nil)
 	if err != nil {
+		hc.clear()
 		return nil, err
 	}
 	var pages []facebookPage
