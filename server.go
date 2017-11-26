@@ -1,16 +1,15 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"path"
+	"strconv"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
-	uuid "github.com/satori/go.uuid"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // The cookie store
@@ -78,6 +77,11 @@ func initHostRouter(db *ITrackDatabase, hc *fbHostConfig, r *mux.Router) {
 	api.Handle("/users/{userID}", mw(http.HandlerFunc(updateUser), authMiddleware)).
 		Methods("POST")
 
+	api.Handle("/config", mw(http.HandlerFunc(getConfig(db.Hostname)), authMiddleware)).
+		Methods("GET")
+	api.Handle("/config", mw(http.HandlerFunc(setConfig(db.Hostname)), adminMiddleware)).
+		Methods("POST")
+
 	api.Handle("/fb/getRedirectURL", mw(http.HandlerFunc(fbGetRedirectionURL(hc)), adminMiddleware)).
 		Methods("GET")
 	api.Handle("/fb/access", mw(http.HandlerFunc(fbGetAccess(hc)), adminMiddleware)).
@@ -96,10 +100,9 @@ func initHostRouter(db *ITrackDatabase, hc *fbHostConfig, r *mux.Router) {
 	log.Printf("serving static on /static/ from %s", themeStaticDir)
 	r.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(http.Dir(themeStaticDir))))
 
-	/* The 404 handler just returns the index.html */
-	r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, path.Join(themeStaticDir, "index.html"))
-	})
+	/* The 404 handler just returns the templated index.html */
+	indexFileLocation := path.Join(themeStaticDir, "index.html")
+	r.NotFoundHandler = http.HandlerFunc(indexFallback(db, hc, indexFileLocation))
 }
 
 /* Utility
@@ -175,188 +178,48 @@ func adminMiddleware(h http.Handler) http.Handler {
 	})
 }
 
-/* First time setup
+/* Index.html fallback
 ----------------------------------*/
-type installRequest struct {
-	Name     string `json:"name"`
-	Password string `json:"password"`
-}
-
-// Accepts admin user credentials for first-time setup.
-// Logs the user in afterwards.
-func install(w http.ResponseWriter, r *http.Request) {
-	if len(UserDatabase.Users) == 0 {
-		var requestData installRequest
-		decoder := json.NewDecoder(r.Body)
-		if decoder.Decode(&requestData) != nil {
-			throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
-			return
-		}
-		defer r.Body.Close()
-
-		if len(requestData.Name) == 0 {
-			throwError(w, "Invalid name", http.StatusBadRequest)
-			return
-		}
-
-		if len(requestData.Password) < 12 {
-			throwError(w, "Invalid Password. Minimum length is 12", http.StatusBadRequest)
-			return
-		}
-
-		password, err := bcrypt.GenerateFromPassword([]byte(requestData.Password), bcrypt.DefaultCost)
-		if err != nil {
-			throwError(w, "Something went wrong", http.StatusInternalServerError)
-			return
-		}
-
-		hosts := make([]string, 0)
-		for _, site := range Config.Sites {
-			hosts = append(hosts, site.Hostname)
-		}
-
-		id := uuid.NewV4()
-		user := IUser{
-			id.String(),
-			requestData.Name,
-			"",
-			string(password),
-			"admin",
-			hosts,
-		}
-		UserDatabase.addUser(user)
-		json.NewEncoder(w).Encode(authenticatedUserResponse{user.ID, user.Name, user.Bio, user.Role, user.Hosts})
-	} else {
-		throwError(w, "Already set up", http.StatusForbidden)
-	}
-}
-
-/* Authentication Methods
--------------------------------------------*/
-
-type userRequest struct {
-	Name     string   `json:"name"`
-	Bio      string   `json:"bio"`
-	Password string   `json:"password"`
-	Role     string   `json:"role"`
-	Hosts    []string `json:"hosts"`
-}
-
-type loginRequest struct {
-	Name     string `json:"name"`
-	Password string `json:"password"`
-	Remember bool   `json:"remember"`
-}
-
-type userResponse struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Bio  string `json:"bio"`
-}
-
-type authenticatedUserResponse struct {
-	ID    string   `json:"id"`
-	Name  string   `json:"name"`
-	Bio   string   `json:"bio"`
-	Role  string   `json:"role"`
-	Hosts []string `json:"hosts"`
-}
-
-func login(host string) handlerFuncType {
+func indexFallback(db *ITrackDatabase, hc *fbHostConfig, file string) handlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Short term session
-		session, err := store.Get(r, DefaultSession)
+		t, err := template.ParseFiles(file)
 		if err != nil {
-			throwError(w, err.Error(), http.StatusInternalServerError)
+			log.Print(err)
+			throwError(w, "Couldn't parse index file", http.StatusInternalServerError)
 			return
 		}
 
-		userIDI := session.Values["userID"]
-		userNameI := session.Values["userName"]
-		userBioI := session.Values["userBio"]
-		userRoleI := session.Values["userRole"]
-		userHostsI := session.Values["userHosts"]
+		data := struct {
+			Title       string
+			Description string
+		}{"", ""}
 
-		if userIDI != nil {
-			userID, ok := userIDI.(string)
-			userName := userNameI.(string)
-			userBio := userBioI.(string)
-			userRole := userRoleI.(string)
-			userHosts := userHostsI.([]string)
-
-			if ok && len(userID) > 0 {
-				json.NewEncoder(w).Encode(authenticatedUserResponse{userID, userName, userBio, userRole, userHosts})
-				return
+		var seoConfig SeoConfig
+		for _, vConfig := range Config.Sites {
+			if vConfig.Hostname == db.Hostname {
+				seoConfig = vConfig.SeoConfig
+				break
 			}
 		}
 
-		// Get request body
-		var requestData loginRequest
-		decoder := json.NewDecoder(r.Body)
-		if decoder.Decode(&requestData) != nil {
-			throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
-			return
-		}
-		defer r.Body.Close()
-
-		user := UserDatabase.getUserByName(requestData.Name)
-		if user != nil {
-			if !user.inHost(host) {
-				throwError(w, "Invalid login data", http.StatusForbidden)
-				return
-			}
-
-			err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(requestData.Password))
-			if err == nil {
-				session.Values["version"] = DefaultSessionVersion
-				session.Values["userName"] = user.Name
-				session.Values["userID"] = user.ID
-				session.Values["userBio"] = user.Bio
-				session.Values["userRole"] = user.Role
-				session.Values["userHosts"] = user.Hosts
-				session.Values["userPassword"] = user.Password
-				session.Options = &sessions.Options{
-					Path:     "/",
-					Secure:   false,
-					HttpOnly: false,
-				}
-
-				if Config.Env == "prod" {
-					session.Options.Domain = host + "." // dot added to trick chrome into accepting single dot domains
-					session.Options.Secure = true
-				}
-
-				if Config.Env == "dev" && len(Config.DevCookieDomain) > 0 {
-					session.Options.Domain = Config.DevCookieDomain + "." // dot added to trick chrome into accepting single dot domains
-				}
-
-				if requestData.Remember {
-					oneYear := 60 * 60 * 24 * 365
-					session.Options.MaxAge = oneYear
-				}
-
-				session.Save(r, w)
-				json.NewEncoder(w).Encode(authenticatedUserResponse{user.ID, user.Name, user.Bio, user.Role, user.Hosts})
-				return
+		/* SEO / Opengraph variables */
+		path := r.URL.Path[1:]
+		if len(path) == 0 {
+			latestTrack := db.getLatestTrack()
+			data.Title = buildMeta(seoConfig.Title.Episode, latestTrack)
+			data.Description = buildMeta(seoConfig.Description.Episode, latestTrack)
+		} else {
+			episode, err := strconv.Atoi(path)
+			if err != nil {
+				data.Title = seoConfig.Title.Default
+				data.Description = seoConfig.Description.Default
+			} else {
+				track := db.getTrackByEpisode(episode)
+				data.Title = buildMeta(seoConfig.Title.Episode, *track)
+				data.Description = buildMeta(seoConfig.Description.Episode, *track)
 			}
 		}
 
-		throwError(w, "Invalid login data", http.StatusForbidden)
+		t.Execute(w, data)
 	}
-}
-
-func logout(w http.ResponseWriter, r *http.Request) {
-	session, err := store.Get(r, DefaultSession)
-	if err != nil {
-		throwError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	session.Values["userID"] = nil
-	session.Values["userName"] = nil
-	session.Values["userRole"] = nil
-	session.Values["userHosts"] = nil
-	session.Options.MaxAge = -1
-	session.Save(r, w)
-	json.NewEncoder(w).Encode(struct{}{})
 }

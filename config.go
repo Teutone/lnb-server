@@ -5,10 +5,13 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"strconv"
+	"strings"
 )
 
 type SeoConfig struct {
-	Description struct {
+	DefaultSocialMessage string `json:"defaultSocialMessage"`
+	Description          struct {
 		Episode string `json:"episode"`
 		Default string `json:"default"`
 	} `json:"description"`
@@ -75,4 +78,13 @@ func writeConfig() {
 		log.Fatal(err)
 	}
 	json.Unmarshal(configContents, &Config)
+}
+
+func buildMeta(input string, track ITrack) string {
+	epString := strconv.FormatInt(int64(*track.Episode), 10)
+	output := strings.Replace(input, "$$ARTIST", track.Artist, -1)
+	output = strings.Replace(output, "$$TITLE", track.Title, -1)
+	output = strings.Replace(output, "$$RELEASE", track.Release, -1)
+	output = strings.Replace(output, "$$EPISODE", epString, -1)
+	return output
 }

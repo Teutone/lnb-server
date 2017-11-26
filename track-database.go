@@ -96,29 +96,42 @@ func (db *ITrackDatabase) write() {
 }
 
 func (db *ITrackDatabase) getTrackById(id string) *ITrack {
-	var result *ITrack
 	for i := range db.Tracks {
 		track := &db.Tracks[i]
 		if track.ID == id {
-			result = track
-			break
+			return track
 		}
 	}
 
-	return result
+	return nil
+}
+
+func (db *ITrackDatabase) getTrackByEpisode(episode int) *ITrack {
+	for i := range db.Tracks {
+		track := &db.Tracks[i]
+		if *track.Episode == episode {
+			return track
+		}
+	}
+
+	return nil
 }
 
 func (db *ITrackDatabase) getNewEpisodeNumber() int {
-	var latestEpisode = -1
+	return *db.getLatestTrack().Episode + 1
+}
 
-	for i := range db.Tracks {
-		track := &db.Tracks[i]
-		if track.Episode != nil && *track.Episode > latestEpisode {
-			latestEpisode = *track.Episode
+func (db *ITrackDatabase) getLatestTrack() ITrack {
+	startEpisode := -1
+	latestTrack := ITrack{
+		Episode: &startEpisode,
+	}
+	for _, track := range db.Tracks {
+		if track.Episode != nil && *track.Episode > *latestTrack.Episode {
+			latestTrack = track
 		}
 	}
-	latestEpisode = latestEpisode + 1
-	return latestEpisode
+	return latestTrack
 }
 
 func (db *ITrackDatabase) getPublishedTracks() []*ITrack {

@@ -1,0 +1,58 @@
+{
+    "env": "dev",
+    "devCookieDomain": "dev1.local",
+    "letsEncryptEnabled": false,
+    "letsEncryptEmail": "hello@benjaminbaedorf.eu",
+    "port": 8008,
+    "dataDir": "/home/ben/Workspace/lnb-server/data/",
+    "themeDir": "/home/ben/Workspace/lnb-server/static/",
+    "sessionKey": "0123456789-0123456789-0123456789",
+    "fbAppId": "2938748923749",
+    "fbAppSecret": "0123456789asdfasdf0123456789",
+    "sites": [
+        {
+            "hostname": "dev1.local",
+            "theme": "latenight.blue",
+            "fbConfig": {
+                "localUserId": "",
+                "userAccessToken": "",
+                "pageId": "",
+                "pageName": "",
+                "pageAccessToken": ""
+            },
+            "seo": {
+                "defaultSocialMessage": "Episode $$EPISODE features $$TITLE by $$ARTIST.",
+                "description": {
+                    "episode": "Ep. $$EPISODE: $$TITLE by $$ARTIST - latenight.blue- Handpicked minimal Music",
+                    "default": "Handpicked minimal Music"
+                },
+                "title": {
+                    "episode": "Ep. $$EPISODE: $$TITLE by $$ARTIST - latenight.blue",
+                    "default": "Handpicked minimal Music"
+                }
+            }
+        },
+        {
+            "hostname": "dev2.local",
+            "theme": "eleventhirty.am",
+            "fbConfig": {
+                "localUserId": "",
+                "userAccessToken": "",
+                "pageId": "",
+                "pageName": "",
+                "pageAccessToken": ""
+            },
+            "seo": {
+                "defaultSocialMessage": "Episode $$EPISODE features $$TITLE by $$ARTIST.",
+                "description": {
+                    "episode": "Ep. $$EPISODE: $$TITLE by $$ARTIST - 11:30am - Handpicked eclectic Music",
+                    "default": "Handpicked eclectic Music"
+                },
+                "title": {
+                    "episode": "Ep. $$EPISODE: $$TITLE by $$ARTIST - 11:30am",
+                    "default": "Handpicked eclectic Music"
+                }
+            }
+        }
+    ]
+}
