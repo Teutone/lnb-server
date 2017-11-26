@@ -8,8 +8,9 @@ import (
 )
 
 type SiteConfig struct {
-	Hostname string `json:"hostname"`
-	Theme    string `json:"theme"`
+	Hostname string   `json:"hostname"`
+	Theme    string   `json:"theme"`
+	FbConfig fbAccess `json:"fbConfig"`
 }
 
 type ServerConfig struct {
@@ -21,14 +22,17 @@ type ServerConfig struct {
 	DataDir            string `json:"dataDir"`
 	ThemeDir           string `json:"themeDir"`
 	SessionKey         string `json:"sessionKey"`
-	FbAppId            string `json:"fbAppId`
-	FbAppSecret        string `json:"fbAppSecret`
+	FbAppID            string `json:"fbAppId"`
+	FbAppSecret        string `json:"fbAppSecret"`
 	Sites              []SiteConfig
 }
 
 var Config ServerConfig
+var configLocation string
 
 func InitConfig(file string) {
+	configLocation = file
+
 	log.Print("reading config from " + file)
 	configFile, err := ioutil.ReadFile(file)
 	if err != nil {
@@ -43,4 +47,20 @@ func InitConfig(file string) {
 	if Config.Env != "dev" && Config.Env != "prod" {
 		log.Fatal("Please set the config \"env\" key to either \"dev\" or \"prod\"")
 	}
+}
+
+func writeConfig() {
+	log.Println("writing config")
+
+	configString, err := json.MarshalIndent(&Config, "", "    ")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ioutil.WriteFile(configLocation, configString, 0666)
+	configContents, err := ioutil.ReadFile(configLocation)
+	if err != nil {
+		log.Fatal(err)
+	}
+	json.Unmarshal(configContents, &Config)
 }

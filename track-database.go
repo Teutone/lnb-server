@@ -28,7 +28,7 @@ type ITrackDatabase struct {
 	Tracks   []ITrack
 }
 
-func InitTrackDatabase(hostname string) *ITrackDatabase {
+func initTrackDatabase(hostname string) *ITrackDatabase {
 	log.Printf("initializing track database for host %s", hostname)
 
 	if Config.DataDir == "" {

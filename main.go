@@ -22,15 +22,17 @@ func main() {
 
 	InitConfig(configFile)
 	InitUserDatabase()
+	initFb()
 
 	router := mux.NewRouter()
 
 	// Loop over the hosts defined in the config so we can setup the vhosts
 	hostnames := make([]string, 0)
 	for _, vConfig := range Config.Sites {
-		trackDb := InitTrackDatabase(vConfig.Hostname)
+		trackDb := initTrackDatabase(vConfig.Hostname)
 		vRouter := router.Host(vConfig.Hostname).Subrouter()
-		InitHostRouter(trackDb, vRouter)
+		hc := getFbConfigForHost(vConfig.Hostname)
+		initHostRouter(trackDb, hc, vRouter)
 		hostnames = append(hostnames, vConfig.Hostname)
 	}
 

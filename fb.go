@@ -2,29 +2,172 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"strconv"
 
 	fb "github.com/huandu/facebook"
 )
 
-var FbApp *fb.App
+var fbApp *fb.App
 
-func initFb() {
-	FbApp = fb.New(Config.FbAppId, Config.FbAppSecret)
-	FbApp.RedirectUri = "https://" + Config.Sites[0].Hostname + "/admin/fb-connect"
+type fbAccess struct {
+	LocalUserID     string `json:"localUserId"`
+	UserAccessToken string `json:"userAccessToken"`
+	PageID          string `json:"pageId"`
+	PageName        string `json:"pageName"`
+	PageAccessToken string `json:"pageAccessToken"`
 }
 
-func getFbLoginRedirect() (string, error) {
+type fbHostConfig struct {
+	access      *fbAccess
+	host        string
+	userSession *fb.Session
+	pageSession *fb.Session
+}
+
+func initFb() {
+
+	fbApp = fb.New(Config.FbAppID, Config.FbAppSecret)
+	// fbApp.RedirectUri = "http://" + Config.Sites[0].Hostname + "/admin/fb/connect"
+}
+
+func getFbConfigForHost(host string) *fbHostConfig {
+	hostConfig := fbHostConfig{
+		nil,
+		host,
+		nil,
+		nil,
+	}
+	for index := range Config.Sites {
+		site := &Config.Sites[index]
+		if site.Hostname == host {
+			hostConfig.access = &site.FbConfig
+			break
+		}
+	}
+
+	if hostConfig.access == nil || len(hostConfig.access.UserAccessToken) == 0 {
+		return &hostConfig
+	}
+
+	err := hostConfig.initUserSession()
+	if err == nil {
+		err = hostConfig.initPageSession()
+		if err != nil {
+			log.Printf("Page session for host %s did not validate", host)
+		}
+	} else {
+		log.Printf("User session for host %s did not validate", host)
+	}
+
+	return &hostConfig
+}
+
+func (hc *fbHostConfig) clear() {
+	hc.access = nil
+	hc.pageSession = nil
+	hc.userSession = nil
+
+	for index := range Config.Sites {
+		site := &Config.Sites[index]
+		if site.Hostname == hc.host {
+			site.FbConfig = fbAccess{"", "", "", "", ""}
+			hc.access = &site.FbConfig
+			break
+		}
+	}
+
+	writeConfig()
+}
+
+func (hc *fbHostConfig) getFbLoginRedirect() string {
 	state, err := GenerateRandomString(12)
 
 	if err != nil {
-		return "", err
+		return ""
 	}
 
 	return fmt.Sprintf(
-		"https://www.facebook.com/v2.11/dialog/oauth?client_id=%s&redirect_uri=%s&state=%s&scope=%s",
-		Config.FbAppId,
-		FbApp.RedirectUri,
+		"https://www.facebook.com/v2.11/dialog/oauth?client_id=%s&&state=%s&scope=%s&response_type=%s",
+		Config.FbAppID,
 		state,
 		"manage_pages,publish_pages",
-	), nil
+		"token",
+	)
+}
+
+func (hc *fbHostConfig) initUserSession() error {
+	hc.userSession = fbApp.Session(hc.access.UserAccessToken)
+	hc.userSession.EnableAppsecretProof(true)
+	return hc.userSession.Validate()
+}
+
+func (hc *fbHostConfig) setUserAccessToken(userAccessToken string, userID string) error {
+	hc.clear()
+	hc.access.UserAccessToken = userAccessToken
+	hc.access.LocalUserID = userID
+	err := hc.initUserSession()
+	writeConfig()
+	return err
+}
+
+func (hc *fbHostConfig) initPageSession() error {
+	hc.pageSession = fbApp.Session(hc.access.PageAccessToken)
+	hc.pageSession.EnableAppsecretProof(true)
+	return hc.pageSession.Validate()
+}
+
+type facebookPage struct {
+	Name        string `facebook:"name,required" json:"name"`
+	AccessToken string `facebook:"access_token,required" json:"accessToken"`
+	ID          string `facebook:",required" json:"id"`
+}
+
+func (hc *fbHostConfig) getPages() ([]facebookPage, error) {
+	res, err := hc.userSession.Get("/me/accounts", nil)
+	if err != nil {
+		return nil, err
+	}
+	var pages []facebookPage
+	res.DecodeField("data", &pages)
+	return pages, nil
+}
+
+func (hc *fbHostConfig) setPage(pageID string, pageName string, pageAccessToken string) error {
+	hc.access.PageID = pageID
+	hc.access.PageName = pageName
+	hc.access.PageAccessToken = pageAccessToken
+	err := hc.initPageSession()
+	writeConfig()
+	return err
+}
+
+func (hc *fbHostConfig) postToPage(message string, track ITrack) error {
+	if hc.pageSession == nil {
+		log.Println("pageSession empty, not posting")
+		return nil
+	}
+
+	epString := strconv.FormatInt(int64(*track.Episode), 10)
+
+	protocol := "http"
+	if Config.LetsEncryptEnabled {
+		protocol = "https"
+	}
+	link := protocol + "://" + hc.host + "/" + epString
+
+	messageToSend := fmt.Sprintf("Episode %s features %s by %s.", epString, track.Title, track.Artist)
+
+	if len(message) != 0 {
+		messageToSend = fmt.Sprintf("%s\n\n%s", message, messageToSend)
+	}
+
+	log.Printf("Printing message to facebook page %s: \n\n%s\n\n%s", hc.access.PageID, messageToSend, link)
+
+	pagePostURL := fmt.Sprintf("/%s/feed", hc.access.PageID)
+	_, err := hc.pageSession.Post(pagePostURL, fb.Params{
+		"message": messageToSend,
+		"link":    link,
+	})
+	return err
 }

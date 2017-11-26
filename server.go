@@ -23,11 +23,11 @@ const (
 	DefaultSessionVersion = 1
 )
 
-type HandlerFuncType func(w http.ResponseWriter, r *http.Request)
+type handlerFuncType func(w http.ResponseWriter, r *http.Request)
 
-// Takes the track database a
+// Takes the track database and
 // The router initializissociated with the host as only argument
-func InitHostRouter(db *ITrackDatabase, r *mux.Router) {
+func initHostRouter(db *ITrackDatabase, hc *fbHostConfig, r *mux.Router) {
 	log.Print("initializing router for host " + db.Hostname)
 
 	// Sessions
@@ -68,24 +68,30 @@ func InitHostRouter(db *ITrackDatabase, r *mux.Router) {
 		Methods("POST")
 	api.Handle("/tracks/{trackID}", mw(http.HandlerFunc(updateTrack(db)), authMiddleware)).
 		Methods("POST")
-	api.Handle("/tracks/{trackID}/publish", mw(http.HandlerFunc(publishTrack(db)), authMiddleware)).
+	api.Handle("/tracks/{trackID}/publish", mw(http.HandlerFunc(publishTrack(db, hc)), authMiddleware)).
 		Methods("POST")
 	api.Handle("/tracks/{trackID}/claim", mw(http.HandlerFunc(claimTrack(db)), authMiddleware)).
 		Methods("POST")
 	api.Handle("/tracks/{trackID}", mw(http.HandlerFunc(deleteTrack(db)), authMiddleware)).
 		Methods("DELETE")
 
-	api.Handle("/users/", mw(http.HandlerFunc(addUser(db.Hostname)), authMiddleware)).
+	api.Handle("/users/", mw(http.HandlerFunc(addUser(db.Hostname)), adminMiddleware)).
 		Methods("POST")
 	api.Handle("/users/{userID}", mw(http.HandlerFunc(updateUser), authMiddleware)).
 		Methods("POST")
 
-	api.Handle("/fb/connect-start", mw(http.HandlerFunc(updateUser), authMiddleware)).
+	api.Handle("/fb/getRedirectURL", mw(http.HandlerFunc(fbGetRedirectionURL(hc)), adminMiddleware)).
 		Methods("GET")
-	api.Handle("/fb/connect-finish", mw(http.HandlerFunc(updateUser), authMiddleware)).
+	api.Handle("/fb/access", mw(http.HandlerFunc(fbGetAccess(hc)), adminMiddleware)).
 		Methods("GET")
-	api.Handle("/fb/disconnect", mw(http.HandlerFunc(updateUser), authMiddleware)).
+	api.Handle("/fb/setUserAccessToken", mw(http.HandlerFunc(fbSetUserAccessToken(hc)), adminMiddleware)).
+		Methods("POST")
+	api.Handle("/fb/setPage", mw(http.HandlerFunc(fbSetPage(hc)), adminMiddleware)).
+		Methods("POST")
+	api.Handle("/fb/pages", mw(http.HandlerFunc(fbGetPages(hc)), adminMiddleware)).
 		Methods("GET")
+	api.Handle("/fb", mw(http.HandlerFunc(fbClear(hc)), adminMiddleware)).
+		Methods("DELETE")
 
 	/* Static files */
 	themeStaticDir := path.Join(Config.ThemeDir, db.Hostname)
@@ -143,6 +149,33 @@ func authMiddleware(h http.Handler) http.Handler {
 		}
 	})
 }
+func adminMiddleware(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session, err := store.Get(r, DefaultSession)
+		if err != nil {
+			throwError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		userIDI := session.Values["userID"]
+		userID, ok := userIDI.(string)
+
+		if !ok || len(userID) == 0 {
+			throwError(w, "Nuh-uh", http.StatusForbidden)
+			return
+		}
+
+		userRoleI := session.Values["userRole"]
+		userRole, ok := userRoleI.(string)
+
+		if !ok || len(userRole) == 0 || userRole != "admin" {
+			throwError(w, "Nuh-uh", http.StatusForbidden)
+			return
+		}
+
+		h.ServeHTTP(w, r)
+	})
+}
 
 /* First time setup
 ----------------------------------*/
@@ -194,22 +227,6 @@ func install(w http.ResponseWriter, r *http.Request) {
 			hosts,
 		}
 		UserDatabase.addUser(user)
-
-		session, err := store.Get(r, DefaultSession)
-		if err != nil {
-			throwError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		session.Values["version"] = DefaultSessionVersion
-		session.Values["userName"] = user.Name
-		session.Values["userBio"] = user.Bio
-		session.Values["userID"] = user.ID
-		session.Values["userRole"] = user.Role
-		session.Values["userHosts"] = user.Hosts
-		session.Values["userPassword"] = user.Password
-		session.Save(r, w)
-
 		json.NewEncoder(w).Encode(authenticatedUserResponse{user.ID, user.Name, user.Bio, user.Role, user.Hosts})
 	} else {
 		throwError(w, "Already set up", http.StatusForbidden)
@@ -247,7 +264,7 @@ type authenticatedUserResponse struct {
 	Hosts []string `json:"hosts"`
 }
 
-func login(host string) HandlerFuncType {
+func login(host string) handlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Short term session
 		session, err := store.Get(r, DefaultSession)
@@ -307,12 +324,12 @@ func login(host string) HandlerFuncType {
 				}
 
 				if Config.Env == "prod" {
-					session.Options.Domain = host
+					session.Options.Domain = host + "." // dot added to trick chrome into accepting single dot domains
 					session.Options.Secure = true
 				}
 
 				if Config.Env == "dev" && len(Config.DevCookieDomain) > 0 {
-					session.Options.Domain = Config.DevCookieDomain
+					session.Options.Domain = Config.DevCookieDomain + "." // dot added to trick chrome into accepting single dot domains
 				}
 
 				if requestData.Remember {
@@ -366,7 +383,7 @@ type trackRequest struct {
  * if not, just the published ones.
  *
  *******************************************/
-func getTracks(db *ITrackDatabase) HandlerFuncType {
+func getTracks(db *ITrackDatabase) handlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
 		session, err := store.Get(r, DefaultSession)
 		if err != nil {
@@ -392,7 +409,7 @@ func getTracks(db *ITrackDatabase) HandlerFuncType {
  * I don't care what you choose to put in your files
  *
  **************************************************/
-func addTrack(db *ITrackDatabase) HandlerFuncType {
+func addTrack(db *ITrackDatabase) handlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		// Get request body
@@ -470,16 +487,16 @@ func addTrack(db *ITrackDatabase) HandlerFuncType {
  * Updates a track, whether published or unpublished
  *
  ******************************************************/
-func updateTrack(db *ITrackDatabase) HandlerFuncType {
+func updateTrack(db *ITrackDatabase) handlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Get request body
 		var requestData trackRequest
 		decoder := json.NewDecoder(r.Body)
-		if decoder.Decode(&requestData) != nil {
+		err := decoder.Decode(&requestData)
+		defer r.Body.Close()
+		if err != nil {
 			throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
 			return
 		}
-		defer r.Body.Close()
 		params := mux.Vars(r)
 		trackID := params["trackID"]
 
@@ -535,8 +552,20 @@ func updateTrack(db *ITrackDatabase) HandlerFuncType {
 /* Publishes a track with given ID
  *
  ***************************************/
-func publishTrack(db *ITrackDatabase) HandlerFuncType {
+type publishTrackRequest struct {
+	Message string `json:"message"`
+}
+
+func publishTrack(db *ITrackDatabase, hc *fbHostConfig) handlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var requestData publishTrackRequest
+		decoder := json.NewDecoder(r.Body)
+		err := decoder.Decode(&requestData)
+		defer r.Body.Close()
+		if err != nil {
+			throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+			return
+		}
 		params := mux.Vars(r)
 		trackID := params["trackID"]
 		track := db.getTrackById(trackID)
@@ -552,6 +581,11 @@ func publishTrack(db *ITrackDatabase) HandlerFuncType {
 			track.Episode = &latestEpisode
 			track.LastChangeStamp = time.Now().Unix()
 			db.write()
+			err = hc.postToPage(requestData.Message, *track)
+			if err != nil {
+				log.Printf("Couldn't post to facebook: %s", err.Error())
+				log.Printf("verbose error info: %#v", err)
+			}
 			json.NewEncoder(w).Encode(track)
 		} else {
 			throwError(w, "Track not found", http.StatusNotFound)
@@ -564,7 +598,7 @@ func publishTrack(db *ITrackDatabase) HandlerFuncType {
  * Used for legacy Databases, users can say if they uploaded this track
  *
  ***************************************/
-func claimTrack(db *ITrackDatabase) HandlerFuncType {
+func claimTrack(db *ITrackDatabase) handlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
 		params := mux.Vars(r)
 		trackID := params["trackID"]
@@ -594,7 +628,7 @@ func claimTrack(db *ITrackDatabase) HandlerFuncType {
 	}
 }
 
-func deleteTrack(db *ITrackDatabase) HandlerFuncType {
+func deleteTrack(db *ITrackDatabase) handlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
 		params := mux.Vars(r)
 		trackID := params["trackID"]
@@ -614,7 +648,7 @@ func deleteTrack(db *ITrackDatabase) HandlerFuncType {
 /* User CRU(D)
 ----------------------------------*/
 
-func getUsers(host string) HandlerFuncType {
+func getUsers(host string) handlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
 		session, err := store.Get(r, DefaultSession)
 		if err != nil {
@@ -644,22 +678,8 @@ func getUsers(host string) HandlerFuncType {
 	}
 }
 
-func addUser(host string) HandlerFuncType {
+func addUser(host string) handlerFuncType {
 	return func(w http.ResponseWriter, r *http.Request) {
-		session, err := store.Get(r, DefaultSession)
-		if err != nil {
-			throwError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		userRole := session.Values["userRole"]
-
-		if userRole != "admin" {
-			throwError(w, "Insufficient rights", http.StatusForbidden)
-			return
-		}
-
-		// Get request body
 		var requestData userRequest
 		decoder := json.NewDecoder(r.Body)
 		if decoder.Decode(&requestData) != nil {
@@ -731,9 +751,10 @@ func updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	currUserRole := session.Values["userRole"]
-	currUserID := session.Values["userID"]
-	if currUserID != userID && currUserRole != "admin" {
+	currUserIDI := session.Values["userID"]
+	currUserID, ok := currUserIDI.(string)
+	currUserRole := session.Values["userRole"].(string)
+	if !ok || (currUserID != userID && currUserRole != "admin") {
 		throwError(w, "Insufficient rights", http.StatusForbidden)
 		return
 	}
@@ -771,5 +792,144 @@ func updateUser(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(authenticatedUserResponse{user.ID, user.Name, user.Bio, user.Role, user.Hosts})
 	} else {
 		throwError(w, "User not found", http.StatusNotFound)
+	}
+}
+
+/* Facebook stuff */
+type fbRedirectResponse struct {
+	URL string `json:"url"`
+}
+
+func fbGetRedirectionURL(hc *fbHostConfig) handlerFuncType {
+	return func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(fbRedirectResponse{hc.getFbLoginRedirect()})
+	}
+}
+
+type fbSetUserRequest struct {
+	UserAccessToken string `json:"userAccessToken"`
+}
+
+func fbSetUserAccessToken(hc *fbHostConfig) handlerFuncType {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var requestData fbSetUserRequest
+		decoder := json.NewDecoder(r.Body)
+		err := decoder.Decode(&requestData)
+		defer r.Body.Close()
+		if err != nil {
+			throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+			return
+		}
+
+		session, err := store.Get(r, DefaultSession)
+		if err != nil {
+			throwError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		currUserIDI := session.Values["userID"]
+		currUserID, ok := currUserIDI.(string)
+		if !ok {
+			throwError(w, "Insufficient rights", http.StatusForbidden)
+			return
+		}
+
+		err = hc.setUserAccessToken(requestData.UserAccessToken, currUserID)
+
+		if err != nil {
+			throwError(w, "User access does not seem to work: "+err.Error(), http.StatusExpectationFailed)
+			return
+		}
+
+		json.NewEncoder(w).Encode(hc.access)
+	}
+}
+
+func fbGetPages(hc *fbHostConfig) handlerFuncType {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, err := store.Get(r, DefaultSession)
+		if err != nil {
+			throwError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		currUserIDI := session.Values["userID"]
+		currUserID, ok := currUserIDI.(string)
+		if !ok || currUserID != hc.access.LocalUserID {
+			throwError(w, "Insufficient rights", http.StatusForbidden)
+			return
+		}
+
+		pages, err := hc.getPages()
+		if err != nil {
+			throwError(w, err.Error(), http.StatusExpectationFailed)
+			return
+		}
+
+		json.NewEncoder(w).Encode(pages)
+	}
+}
+
+type accessResponse struct {
+	LocalUserID string `json:"localUserId"`
+	PageName    string `json:"pageName"`
+	PageID      string `json:"pageId"`
+}
+
+func fbGetAccess(hc *fbHostConfig) handlerFuncType {
+	return func(w http.ResponseWriter, r *http.Request) {
+		res := accessResponse{
+			hc.access.LocalUserID,
+			hc.access.PageName,
+			hc.access.PageID,
+		}
+		json.NewEncoder(w).Encode(res)
+	}
+}
+
+type fbSetPageRequest struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	AccessToken string `json:"accessToken"`
+}
+
+func fbSetPage(hc *fbHostConfig) handlerFuncType {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, err := store.Get(r, DefaultSession)
+		if err != nil {
+			throwError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		currUserIDI := session.Values["userID"]
+		currUserID, ok := currUserIDI.(string)
+		if !ok || currUserID != hc.access.LocalUserID {
+			throwError(w, "Insufficient rights", http.StatusForbidden)
+			return
+		}
+
+		var requestData fbSetPageRequest
+		decoder := json.NewDecoder(r.Body)
+		err = decoder.Decode(&requestData)
+		defer r.Body.Close()
+		if err != nil {
+			throwError(w, "Sent JSON body does is not of correct type", http.StatusBadRequest)
+			return
+		}
+
+		err = hc.setPage(requestData.ID, requestData.Name, requestData.AccessToken)
+		if err != nil {
+			throwError(w, "Page access does not seem to work: "+err.Error(), http.StatusExpectationFailed)
+			return
+		}
+
+		json.NewEncoder(w).Encode(hc.access)
+	}
+}
+
+func fbClear(hc *fbHostConfig) handlerFuncType {
+	return func(w http.ResponseWriter, r *http.Request) {
+		hc.clear()
+		json.NewEncoder(w).Encode(struct{}{})
 	}
 }
