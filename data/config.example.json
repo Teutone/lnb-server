@@ -1,9 +1,7 @@
 {
     "env": "dev",
     "devCookieDomain": "dev1.local",
-    "letsEncryptEnabled": false,
-    "letsEncryptEmail": "hello@benjaminbaedorf.eu",
-    "port": 8008,
+    "port": 8080,
     "dataDir": "/home/ben/Workspace/lnb-server/data/",
     "themeDir": "/home/ben/Workspace/lnb-server/static/",
     "sessionKey": "0123456789-0123456789-0123456789",

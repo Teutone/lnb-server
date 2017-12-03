@@ -1,3 +1,6 @@
 /static
 /data/*.json
 !/data/config.example.json
+/static/*
+!/static/.gitkeep
+/main

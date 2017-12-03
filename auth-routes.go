@@ -104,10 +104,6 @@ func login(host string) handlerFuncType {
 					session.Options.Secure = true
 				}
 
-				if Config.Env == "dev" && len(Config.DevCookieDomain) > 0 {
-					session.Options.Domain = Config.DevCookieDomain
-				}
-
 				if requestData.Remember {
 					oneYear := 60 * 60 * 24 * 365
 					session.Options.MaxAge = oneYear
