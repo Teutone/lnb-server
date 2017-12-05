@@ -15,7 +15,7 @@ pipeline:
       - go test
   publish:
     image: plugins/docker
-    repo: docker.benjaminbaedorf.eu/b12f/lnb-server
+    repo: b12f/lnb-server
     registry: docker.benjaminbaedorf.eu
     secrets: [ docker_username, docker_password ]
     when:

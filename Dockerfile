@@ -12,4 +12,4 @@ EXPOSE 8080
 
 CMD ["/lnb-server/main"]
 
-RUN ["/lnb-server/main", "data/config.json"]
+RUN ["/lnb-server/main", "/lnb-server/data/config.json"]
