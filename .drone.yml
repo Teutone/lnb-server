@@ -20,5 +20,4 @@ pipeline:
     secrets: [ docker_username, docker_password ]
     when:
       event: tag
-      branch: master
       status: success
