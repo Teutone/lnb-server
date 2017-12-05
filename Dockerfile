@@ -1,4 +1,4 @@
-FROM scratch
+FROM alphine:latest
 
 WORKDIR /lnb-server
 RUN mkdir -p static
