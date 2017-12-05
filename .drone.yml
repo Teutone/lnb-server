@@ -1,10 +1,15 @@
 pipeline:
+  clone:
+    image: plugins/git
   backend:
     group: build
     image: golang
+    environment:
+      - CGO=0
+      - GOOS=linux
     commands:
       - go get
-      - CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o ./main ./*.go
+      - go build -a -installsuffix cgo -o ./main ./*.go
       - go test
   publish:
     image: plugins/docker

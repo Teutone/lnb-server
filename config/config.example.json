@@ -1,9 +1,7 @@
 {
-    "env": "dev",
-    "devCookieDomain": "dev1.local",
     "port": 8080,
-    "dataDir": "/home/ben/Workspace/lnb-server/data/",
-    "themeDir": "/home/ben/Workspace/lnb-server/static/",
+    "dataDir": "/home/lnb/lnb-server/data/",
+    "themeDir": "/home/lnb/lnb-server/static/",
     "sessionKey": "0123456789-0123456789-0123456789",
     "fbAppId": "2938748923749",
     "fbAppSecret": "0123456789asdfasdf0123456789",
