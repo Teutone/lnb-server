@@ -1,4 +1,4 @@
-FROM alphine:latest
+FROM alpine:latest
 
 WORKDIR /lnb-server
 RUN mkdir -p static
