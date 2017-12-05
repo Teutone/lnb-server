@@ -3,7 +3,6 @@ FROM scratch
 WORKDIR /lnb-server
 ADD main .
 ADD static .
-ADD data .
 # set a health check
 HEALTHCHECK --interval=5s \
             --timeout=5s \
