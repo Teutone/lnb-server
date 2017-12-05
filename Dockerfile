@@ -1,8 +1,10 @@
 FROM scratch
 
 WORKDIR /lnb-server
+RUN mkdir -p static
+RUN mkdir -p data
 ADD main .
-ADD static .
+
 # set a health check
 HEALTHCHECK --interval=5s \
             --timeout=5s \
