@@ -1,2 +1,7 @@
 /static
-/data
+/data/*.json
+/static/*
+!/static/.gitkeep
+/main
+config.json
+.env

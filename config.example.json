@@ -1,7 +1,0 @@
-{
-    "port": 8001,
-    "hostname": "localhost",
-    "databaseFile": "/home/ben/Workspace/lnb-server/data/db.json",
-    "themeDir": "/home/ben/Workspace/lnb-server/static/",
-    "authKey": "0123456789-0123456789-0123456789"
-}
