@@ -3,8 +3,7 @@ workspace:
   path: src/git.benjaminbaedorf.eu/b12f/lnb-server
 
 pipeline:
-  backend:
-    group: build
+  build:
     image: golang:1.8
     environment:
       - CGO=0
@@ -16,6 +15,7 @@ pipeline:
   publish:
     image: plugins/docker
     repo: docker.benjaminbaedorf.eu/b12f/lnb-server
+    tags: ${DRONE_TAG}
     registry: docker.benjaminbaedorf.eu
     secrets: [ docker_username, docker_password ]
     when:
