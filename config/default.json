@@ -1,0 +1,33 @@
+{
+    "port": 8080,
+    "dataDir": "/lnb-server/data/",
+    "themeDir": "/lnb-server/static/",
+    "sessionKey": "0123456789-0123456789-0123456789",
+    "fbAppId": "2938748923749",
+    "fbAppSecret": "0123456789asdfasdf0123456789",
+    "sites": [
+        {
+            "hostname": "localhost",
+            "theme": "default",
+            "fbConfig": {
+                "localUserId": "",
+                "userAccessToken": "",
+                "pageId": "",
+                "pageName": "",
+                "pageAccessToken": ""
+            },
+            "seo": {
+                "informationText": "Short description of your website",
+                "defaultSocialMessage": "Episode $$EPISODE features $$TITLE by $$ARTIST.",
+                "description": {
+                    "episode": "Ep. $$EPISODE: $$TITLE by $$ARTIST",
+                    "default": "Handpicked music"
+                },
+                "title": {
+                    "episode": "Ep. $$EPISODE: $$TITLE by $$ARTIST",
+                    "default": "Handpicked music"
+                }
+            }
+        }
+    ]
+}

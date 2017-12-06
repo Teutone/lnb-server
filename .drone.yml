@@ -1,9 +1,11 @@
+workspace:
+  base: /go
+  path: src/git.benjaminbaedorf.eu/b12f/lnb-server
+
 pipeline:
-  clone:
-    image: plugins/git
   backend:
     group: build
-    image: golang
+    image: golang:1.8
     environment:
       - CGO=0
       - GOOS=linux
@@ -13,10 +15,9 @@ pipeline:
       - go test
   publish:
     image: plugins/docker
-    repo: docker.benjaminbaedorf.eu/b12f/lnb-server
+    repo: b12f/lnb-server
     registry: docker.benjaminbaedorf.eu
     secrets: [ docker_username, docker_password ]
     when:
       event: tag
-      branch: master
       status: success

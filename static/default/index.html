@@ -1,0 +1,26 @@
+<head>
+    <title>It works!</title>
+    <script type="application/javascript">
+        window.g = (m, u, b) => 
+            fetch(`/api/${u}`, {method: m, body: JSON.stringify(b)})
+                .then(r => r.json());
+    </script>
+    <style>
+        body {
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>lnb-server works!</h1>
+    <p>Now you only need to add a Theme</p>
+    <h2>Test the api</h2>
+    <p>This page has a utility function embedded in the page. Open the console (F12) and try it:</p>
+    <code><pre>
+g('GET', 'tracks').then(data => console.log(data));
+    </pre></code>
+    <p>If there are no users yet, you can set the first admin user by hand:</p>
+    <code><pre>
+g('POST', 'install', { 'username': ADMIN_USERNAME, 'password': YOUR_PASSWORD }).then(data => console.log(data));
+    </pre></code>
+</body>
