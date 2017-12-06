@@ -30,16 +30,14 @@ type SiteConfig struct {
 }
 
 type ServerConfig struct {
-	Env                string
-	LetsEncryptEnabled bool   `json:"letsEncryptEnabled"`
-	LetsEncryptEmail   string `json:"letsEncryptEmail"`
-	Port               int    `json:"port"`
-	DataDir            string `json:"dataDir"`
-	ThemeDir           string `json:"themeDir"`
-	SessionKey         string `json:"sessionKey"`
-	FbAppID            string `json:"fbAppId"`
-	FbAppSecret        string `json:"fbAppSecret"`
-	Sites              []SiteConfig
+	env         string
+	Port        int    `json:"port"`
+	DataDir     string `json:"dataDir"`
+	ThemeDir    string `json:"themeDir"`
+	SessionKey  string `json:"sessionKey"`
+	FbAppID     string `json:"fbAppId"`
+	FbAppSecret string `json:"fbAppSecret"`
+	Sites       []SiteConfig
 }
 
 var Config ServerConfig
@@ -59,10 +57,10 @@ func initConfig(file string) {
 	}
 	json.Unmarshal(configFile, &Config)
 
-	Config.Env = os.Getenv("APP_ENV")
+	Config.env = os.Getenv("LNB_ENV")
 
-	if Config.Env != "dev" && Config.Env != "prod" {
-		log.Fatal("Please set the config \"env\" key to either \"dev\" or \"prod\"")
+	if Config.env != "development" && Config.env != "production" {
+		Config.env = "development"
 	}
 }
 

@@ -1,10 +1,10 @@
 FROM alpine:latest
 
 WORKDIR /lnb-server
-RUN mkdir -p static
 RUN mkdir -p data
 ADD main .
 ADD config/default.json data/config.json
+ADD static .
 
 # set a health check
 HEALTHCHECK --interval=5s \
@@ -13,6 +13,4 @@ HEALTHCHECK --interval=5s \
 
 EXPOSE 8080
 
-CMD ["/lnb-server/main"]
-
-RUN ["/lnb-server/main", "/lnb-server/data/config.json"]
+CMD ["/lnb-server/main", "/lnb-server/data/config.json"]

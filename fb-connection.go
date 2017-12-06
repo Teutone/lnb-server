@@ -162,7 +162,7 @@ func (hc *fbHostConfig) postToPage(message string, track ITrack) error {
 
 	epString := strconv.FormatInt(int64(*track.Episode), 10)
 	protocol := "http"
-	if Config.LetsEncryptEnabled {
+	if Config.env == "production" {
 		protocol = "https"
 	}
 	link := protocol + "://" + hc.host + "/" + epString

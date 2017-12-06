@@ -99,7 +99,7 @@ func login(host string) handlerFuncType {
 					MaxAge:   60 * 60,
 				}
 
-				if Config.Env == "prod" {
+				if Config.env == "production" {
 					// session.Options.Domain = host
 					session.Options.Secure = true
 				}

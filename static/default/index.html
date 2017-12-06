@@ -23,4 +23,10 @@ g('GET', 'tracks').then(data => console.log(data));
     <code><pre>
 g('POST', 'install', { 'username': ADMIN_USERNAME, 'password': YOUR_PASSWORD }).then(data => console.log(data));
     </pre></code>
+
+    <h2>Golang template variables:</h2>
+    <p>title: {{.Title}}</p>
+    <p>description: {{.Description}}</p>
+    <p>url: {{.URL}}</p>
+    <p>host: {{.Host }}</p>
 </body>

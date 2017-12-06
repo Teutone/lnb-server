@@ -192,7 +192,7 @@ func indexFallback(db *ITrackDatabase, hc *fbHostConfig, file string) handlerFun
 		}
 
 		protocol := "http"
-		if Config.LetsEncryptEnabled {
+		if Config.env == "production" {
 			protocol = "https"
 		}
 		data := struct {
