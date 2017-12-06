@@ -17,7 +17,8 @@ pipeline:
     repo: docker.benjaminbaedorf.eu/b12f/lnb-server
     tags:
       - latest
-      - $$DRONE_TAG
+      - ${DRONE_TAG}
+      - ${DRONE_COMMIT_SHA:0:8}
     registry: docker.benjaminbaedorf.eu
     secrets: [ docker_username, docker_password ]
     when:
