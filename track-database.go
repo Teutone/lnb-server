@@ -109,7 +109,7 @@ func (db *ITrackDatabase) getTrackById(id string) *ITrack {
 func (db *ITrackDatabase) getTrackByEpisode(episode int) *ITrack {
 	for i := range db.Tracks {
 		track := &db.Tracks[i]
-		if *track.Episode == episode {
+		if track.Episode != nil && *track.Episode == episode {
 			return track
 		}
 	}
