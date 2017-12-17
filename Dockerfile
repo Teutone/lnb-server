@@ -1,4 +1,4 @@
-FROM alpine:latest
+FROM ubuntu:latest
 
 WORKDIR /lnb-server
 RUN mkdir -p data
@@ -8,4 +8,5 @@ ADD static .
 
 EXPOSE 8080
 
-CMD ["/lnb-server/main", "/lnb-server/data/config.json"]
+ENTRYPOINT ["/lnb-server/main"]
+CMD ["data/config.json"]
