@@ -100,7 +100,7 @@ func initHostRouter(db *ITrackDatabase, hc *fbHostConfig, r *mux.Router) {
 	/* Static files */
 	themeStaticDir := path.Join(Config.ThemeDir, db.Hostname)
 	log.Printf("serving static on /static/ from %s", themeStaticDir)
-	r.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(http.Dir(themeStaticDir))))
+	r.PathPrefix("/static/").Handler(http.FileServer(http.Dir(themeStaticDir)))
 
 	/* The 404 handler just returns the templated index.html */
 	indexFileLocation := path.Join(themeStaticDir, "index.html")
