@@ -13,6 +13,10 @@ const output = input.songs.map(({ title, artist, album, episode, id, url }) => (
     episode,
     id,
     url,
-    meta: '{}'
+    uploader: '',
+    start: 0,
+    end: 0,
+    meta: '{}',
+    lastChangeStamp: +(Date.now()),
 }))
 fs.writeFileSync(path.join(process.cwd(), outputLocation), JSON.stringify(output, null, 4), 'utf8');
