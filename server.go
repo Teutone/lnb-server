@@ -228,8 +228,12 @@ func indexFallback(db *ITrackDatabase, hc *fbHostConfig, file string) handlerFun
 				data.Description = seoConfig.Description.Default
 			} else {
 				track := db.getTrackByEpisode(episode)
-				data.Title = buildMeta(seoConfig.Title.Episode, *track)
-				data.Description = buildMeta(seoConfig.Description.Episode, *track)
+				if track != nil {
+					data.Title = buildMeta(seoConfig.Title.Episode, *track)
+					data.Description = buildMeta(seoConfig.Description.Episode, *track)
+				} else {
+					http.Redirect(w, r, "https://"+r.Host+"/", http.StatusTemporaryRedirect)
+				}
 			}
 		}
 
