@@ -89,7 +89,11 @@ func install(w http.ResponseWriter, r *http.Request) {
 			hosts = append(hosts, site.Hostname)
 		}
 
-		id := uuid.NewV4()
+		id, err := uuid.NewV4()
+		if err != nil {
+			throwError(w, "Could not generate ID", http.StatusInternalServerError)
+		}
+
 		user := IUser{
 			id.String(),
 			requestData.Name,

@@ -84,7 +84,11 @@ func addUser(host string) handlerFuncType {
 			return
 		}
 
-		id := uuid.NewV4()
+		id, err := uuid.NewV4()
+		if err != nil {
+			throwError(w, "Could not generate ID", http.StatusInternalServerError)
+		}
+
 		newUser := IUser{
 			id.String(),
 			requestData.Name,

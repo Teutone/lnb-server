@@ -112,8 +112,12 @@ func addTrack(db *ITrackDatabase) handlerFuncType {
 			return
 		}
 
+		id, err := uuid.NewV4()
+		if err != nil {
+			throwError(w, "Could not generate ID", http.StatusInternalServerError)
+		}
 		track := ITrack{
-			ID:              uuid.NewV4().String(),
+			ID:              id.String(),
 			Episode:         nil,
 			Artist:          requestData.Artist,
 			Title:           requestData.Title,
